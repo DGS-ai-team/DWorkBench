@@ -43,9 +43,6 @@ jobs:
       - run: dotnet run --project tests/LogDesk.CoreChecks
       - run: node tests/log-processing.mjs
       - run: node tests/log-activity.mjs
-      - name: Linux secure file follower
-        if: runner.os == 'Linux'
-        run: python3 tests/remote-follow.py
       - run: npx playwright install chromium --with-deps
         working-directory: src/LogDesk.Client
       - name: SQLite, SSH and browser regression

@@ -5,7 +5,6 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import path from "node:path";
 import net from "node:net";
-import { remoteCommand } from './remote-command.mjs';
 export const root = process.cwd();
 export const require = createRequire(
   path.join(root, "src/LogDesk.Client/package.json"),
@@ -152,6 +151,24 @@ export async function sshFixture(name = "bench.log") {
   const directory = "/var/log/bench",
     filename = directory + "/" + name;
   const contents = Buffer.from("INFO benchmark ready\n");
+  let fileLength = contents.length, retainedBytes = contents.length, prefix = contents;
+  const chunks = [{ offset: 0, data: contents }];
+  const append = data => {
+    if (prefix.length < 256) prefix = Buffer.concat([prefix, data]).subarray(0, 256);
+    chunks.push({ offset: fileLength, data }); fileLength += data.length; retainedBytes += data.length;
+    while (retainedBytes > 32 * 1024 * 1024 && chunks.length > 1) retainedBytes -= chunks.shift().data.length;
+  };
+  const read = (offset, length) => {
+    const parts = [];
+    let remaining = Math.min(length, fileLength - offset);
+    while (remaining > 0) {
+      const chunk = offset < prefix.length ? { offset: 0, data: prefix } : chunks.find(c => offset >= c.offset && offset < c.offset + c.data.length);
+      if (!chunk) break;
+      const part = chunk.data.subarray(offset - chunk.offset, offset - chunk.offset + remaining);
+      parts.push(part); offset += part.length; remaining -= part.length;
+    }
+    return parts.length ? Buffer.concat(parts) : undefined;
+  };
   const connections = new Set(),
     sessions = new Set();
   let timer,
@@ -160,8 +177,7 @@ export async function sshFixture(name = "bench.log") {
     bytes = 0,
     sshBytes = 0,
     starts = 0,
-    upstreamSlow = 0,
-    history = [];
+    upstreamSlow = 0;
   function setRate(next) {
     clearInterval(timer);
     rate = next;
@@ -192,19 +208,10 @@ export async function sshFixture(name = "bench.log") {
                 : "time=" + at + " severity=WARN " + body + "\n",
         );
       }
-      history = history.concat(lines).slice(-200);
       const payload = lines.join("");
       emitted += due;
       bytes += Buffer.byteLength(payload);
-      for (const stream of sessions) {
-        if (stream.writableLength > 512 * 1024) {
-          upstreamSlow++;
-          stream.close();
-          continue;
-        }
-        stream.write(payload);
-        sshBytes += Buffer.byteLength(payload);
-      }
+      append(Buffer.from(payload));
     }, 20);
   }
   const server = new Server({ hostKeys: [key] }, (client) => {
@@ -221,33 +228,23 @@ export async function sshFixture(name = "bench.log") {
     client.on("ready", () =>
       client.on("session", (accept) => {
         const session = accept();
-        session.on("exec", (accept, reject, info) => {
-          if (info.command !== remoteCommand(filename))
-            return reject();
-          const stream = accept();
-          starts++;
-          sessions.add(stream);
-          stream.write(history.length ? history.join("") : contents);
-          const close = () => {
-            sessions.delete(stream);
-            client.off("close", close);
-          };
-          stream.on("close", close);
-          stream.on("error", close);
-          client.on("close", close);
-          stream.on("signal", () => {
-            close();
-            stream.exit(0);
-            stream.end();
-          });
-        });
+        session.on("exec", (_accept, reject) => reject());
         session.on("sftp", (accept) => {
           const s = accept(),
             handles = new Map();
           let next = 1;
+          let started = false;
+          const track = () => {
+            if ([...handles.values()].some(h => h.file)) {
+              sessions.add(s);
+              if (!started) { starts++; started = true; }
+            } else sessions.delete(s);
+          };
+          const close = () => { handles.clear(); track(); client.off('close', close); };
+          s.on('close', close); s.on('error', close); client.on('close', close);
           const attrs = (p) => ({
             mode: p === directory ? 0o040755 : 0o100644,
-            size: contents.length,
+            size: fileLength,
             uid: 1000,
             gid: 1000,
             atime: Math.floor(Date.now() / 1000),
@@ -285,18 +282,22 @@ export async function sshFixture(name = "bench.log") {
               },
             ]);
           });
-          s.on("OPEN", (id, p) =>
-            p === filename
-              ? s.handle(id, handle({ file: true }))
-              : s.status(id, 2),
-          );
-          s.on("READ", (id, h, offset, len) =>
-            offset >= contents.length
-              ? s.status(id, 1)
-              : s.data(id, contents.subarray(offset, offset + len)),
-          );
+          s.on("OPEN", (id, p, flags) => {
+            if (p !== filename) return s.status(id, 2);
+            if (flags !== 1) return s.status(id, 3);
+            s.handle(id, handle({ file: true })); track();
+          });
+          s.on("FSTAT", (id, h) => handles.get(h.toString('hex'))?.file ? s.attrs(id, attrs(filename)) : s.status(id, 2));
+          s.on("READ", (id, h, offset, len) => {
+            if (!handles.get(h.toString('hex'))?.file) return s.status(id, 2);
+            if (offset >= fileLength) return s.status(id, 1);
+            const data = read(offset, len);
+            if (!data) { upstreamSlow++; return s.status(id, 4); }
+            sshBytes += data.length; s.data(id, data);
+          });
           s.on("CLOSE", (id, h) => {
             handles.delete(h.toString("hex"));
+            track();
             s.status(id, 0);
           });
           s.on("EXTENDED", (id) => s.status(id, 8));

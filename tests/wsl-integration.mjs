@@ -1,4 +1,5 @@
-// Real OpenSSH/SFTP + Linux secure follower verification on the developer's WSL distro.
+// Real SFTP-only account verification on the developer's WSL distro.
+// Host-side fixture setup uses Python; the application account permits only internal-sftp.
 // Run from the repository: node tests/wsl-integration.mjs
 // Creates an isolated account/sshd/log directory, then removes them in finally.
 import assert from "node:assert/strict";
@@ -84,25 +85,20 @@ async function freePort() {
   await new Promise((resolve) => listener.close(resolve));
   return port;
 }
-async function ssh(command) {
+async function sftpReady() {
   return new Promise((resolve, reject) => {
     const client = new SshClient();
     client.on("error", reject);
     client.on("ready", () =>
-      client.exec(command, (error, stream) => {
+      client.sftp((error, stream) => {
         if (error) {
           client.end();
           reject(error);
           return;
         }
-        let output = "";
-        stream.on("data", (value) => (output += value));
-        stream.stderr.on("data", (value) => (output += value));
-        stream.on("close", (code) => {
-          client.end();
-          if (code === 0) resolve(output.trim());
-          else reject(new Error("SSH command exited " + code + ": " + output));
-        });
+        stream.end();
+        client.end();
+        resolve(true);
       }),
     );
     client.connect({
@@ -114,6 +110,7 @@ async function ssh(command) {
     });
   });
 }
+const asAccount = command => wsl(`runuser -u ${account} -- sh -c ${quote(command)}`);
 class Api {
   cookies = new Map();
   csrf = "";
@@ -175,7 +172,7 @@ async function followerPids() {
   const listing = await wsl(`ps -u ${account} -o pid=,comm=,args= || true`);
   return listing
     .split("\n")
-    .filter((line) => /^\s*\d+\s+python3\s+python3 -u -c/.test(line))
+    .filter((line) => /@internal-sftp|sftp-server/.test(line))
     .join("\n");
 }
 async function exerciseFollower(group, file, label) {
@@ -193,7 +190,7 @@ async function exerciseFollower(group, file, label) {
       if (streamError) throw streamError;
       return output.includes("服务已启动");
     }, label + " initial UTF-8");
-    assert.ok(await followerPids(), "A real remote follower process must be running");
+    assert.ok(await followerPids(), "A real SFTP session must be open");
     const start = Date.now();
     await mutate(
       `with p.open('a', encoding='utf-8') as f: f.write(${JSON.stringify(label + " append 实时追加 ✓\n")})`,
@@ -247,7 +244,7 @@ async function exerciseFollower(group, file, label) {
       10000,
     );
   }
-  pass(label + ": cancelling stream removes remote follower");
+  pass(label + ": cancelling stream closes its SFTP session");
 }
 
 try {
@@ -303,7 +300,8 @@ PermitTunnel no
 PermitUserEnvironment no
 PrintMotd no
 LogLevel ERROR
-SetEnv PATH=${remoteRoot}/bin:/usr/bin:/bin
+SetEnv PATH=${remoteRoot}/bin
+ForceCommand internal-sftp
 Subsystem sftp internal-sftp
 CONFIG
 chmod 600 ${remoteRoot}/sshd_config
@@ -339,7 +337,7 @@ PY`);
   sshd.stderr.on("data", (value) => (sshdOutput += value));
   await until(async () => {
     try {
-      return (await ssh("printf ready")) === "ready";
+      return await sftpReady();
     } catch {
       return false;
     }
@@ -348,9 +346,7 @@ PY`);
     address: "127.0.0.1",
     port: sshPort,
   });
-  const pythonVersion = await ssh("python3 --version");
-  console.log("Remote reader runtime: " + pythonVersion);
-  assert.match(pythonVersion, /Python 3/);
+  console.log("Application account: internal-sftp only, no shell/exec or runtime dependencies");
   const pinned = (
     await wsl(`ssh-keygen -l -E sha256 -f ${remoteRoot}/host_key.pub`)
   ).split(/\s+/)[1];
@@ -427,7 +423,7 @@ PY`);
   });
   const group = await api.request("/groups", {
     name: "WSL 实机验证",
-    description: "真实 Linux 文件 · OpenSSH / SFTP / tail",
+    description: "真实 Linux 文件 · 仅 SFTP",
     sourceIds: [source.id],
   });
   await api.request(
@@ -474,7 +470,7 @@ PY`);
     Buffer.from("INFO 服务已启动 ✓\n"),
   );
   pass(
-    "UTF-8 descriptor-based SSH download matches the actual Linux file (space and apostrophe in filename)",
+    "UTF-8 SFTP download matches the actual Linux file (space and apostrophe in filename)",
   );
   // The index remains cached while a source's parent is replaced with a symlink.
   await wsl(`mkdir ${remoteRoot}/outside\nprintf '%s' MUST_NOT_LEAK > ${quote(remoteRoot + "/outside/api space's.log")}\nchown -R ${account}:${account} ${remoteRoot}/outside\nmv ${remoteRoot}/logs ${remoteRoot}/logs-original\nln -s ${remoteRoot}/outside ${remoteRoot}/logs`);
@@ -483,7 +479,7 @@ PY`);
     assert.equal(denied.status, 502);
     const body = await denied.text();
     assert.ok(!body.includes('MUST_NOT_LEAK'));
-    assert.ok(body.includes('Python 3'));
+    assert.ok(body.includes('符号链接'));
   } finally {
     await wsl(`unlink ${remoteRoot}/logs\nmv ${remoteRoot}/logs-original ${remoteRoot}/logs`);
   }
@@ -521,10 +517,10 @@ PY`);
   pass(
     "Initially empty file reports connected and streams its first appended line",
   );
-  await exerciseFollower(group, file, pythonVersion + ' secure follower');
+  await exerciseFollower(group, file, 'SFTP incremental reader');
 
   // Read an existing system log as well; never write to or rotate system files.
-  const existingLog = await ssh("if test -r /var/log/dpkg.log && test -s /var/log/dpkg.log; then printf /var/log/dpkg.log; elif test -r /var/log/dpkg.log.1 && test -s /var/log/dpkg.log.1; then printf /var/log/dpkg.log.1; fi");
+  const existingLog = await asAccount("if test -r /var/log/dpkg.log && test -s /var/log/dpkg.log; then printf /var/log/dpkg.log; elif test -r /var/log/dpkg.log.1 && test -s /var/log/dpkg.log.1; then printf /var/log/dpkg.log.1; fi");
   if (existingLog) {
     const systemSource = await api.request("/sources", {
       hostId: host.id,
@@ -571,7 +567,7 @@ PY`);
       "System log changed while testing; retry with a stable log",
     );
     assert.equal(createHash("sha256").update(bytes).digest("hex"), hashBefore);
-    const expectedTail = await ssh("tail -n 200 -- " + quote(existingLog));
+    const expectedTail = await asAccount("tail -n 200 -- " + quote(existingLog));
     assert.ok(expectedTail.length, "Existing system log has content");
     let systemText = "",
       systemError;

@@ -6,7 +6,6 @@
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="Infrastructure/follow_log.py" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.14" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.14" />

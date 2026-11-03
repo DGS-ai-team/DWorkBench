@@ -7,7 +7,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 import { workspaceChecks, workspaceBrowserChecks } from './workspace.mjs';
-import { remoteCommand } from './remote-command.mjs';
 import { reviewApiChecks, reviewBrowserChecks } from './review-regression.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const require=createRequire(path.join(root,'src/LogDesk.Client/package.json'));
@@ -29,22 +28,12 @@ async function fixture(label){
     sockets.add(client);client.on('error',e=>{if(process.env.DEBUG_FIXTURE)console.log('SSH fixture:',e.message)});client.on('close',()=>sockets.delete(client));
     client.on('authentication',ctx=>{if(ctx.method==='password'){authenticationCount++;if(ctx.username==='reader'&&ctx.password==='FixtureSecret123')return ctx.accept()}ctx.reject(['password'])});
     client.on('ready',()=>client.on('session',accept=>{const session=accept();
-      session.on('exec',(accept,reject,info)=>{
-        const download=[...files.keys()].find(p=>info.command===remoteCommand(p,true));
-        if(download){
-          const stream=accept(),data=files.get(download),header=Buffer.alloc(8);header.writeBigUInt64BE(BigInt(data.length));
-          const read=()=>{stream.write(header);stream.write(data);stream.exit(0);stream.end()};
-          if(holdReads)pendingReads.push(read);else read();
-          return;
-        }
-        const filename=[...files.keys()].find(p=>info.command===remoteCommand(p));if(!filename)return reject();
-        const stream=accept();active++;stream.write(files.get(filename));
-        const timer=setInterval(()=>stream.write(`2026-11-02 10:15:02.125 INFO  [${label}] request completed duration=12ms ✓\n`),180);
-        let closed=false;const close=()=>{if(closed)return;closed=true;clearInterval(timer);active--;client.removeListener('close',close)};stream.on('close',close);stream.on('error',close);client.on('close',close);
-        stream.on('signal',()=>{close();stream.exit(0);stream.end()});
-      });
+      // SFTP-only fixture: shell/exec requests are never accepted.
+      session.on('exec',(_accept,reject)=>reject());
       session.on('sftp',accept=>{
-        const s=accept(),handles=new Map();let next=1;
+        const s=accept(),handles=new Map();let next=1,openCount=0,timer,counted=false,closed=false;
+        const track=()=>{const paths=[...new Set([...handles.values()].filter(h=>h.path).map(h=>h.path))];if(paths.length&&!counted){active++;counted=true}if(!paths.length&&counted){active--;counted=false}if(!paths.length){clearInterval(timer);timer=undefined}else if(openCount>=2&&!timer)timer=setInterval(()=>{for(const p of paths)files.set(p,Buffer.concat([files.get(p),Buffer.from(`2026-11-02 10:15:02.125 INFO  [${label}] request completed duration=12ms ✓\n`)]))},180)};
+        const close=()=>{closed=true;handles.clear();track();client.removeListener('close',close)};s.on('close',close);s.on('error',close);client.on('close',close);
         const handle=value=>{const b=Buffer.alloc(4);b.writeUInt32BE(next++);handles.set(b.toString('hex'),value);return b};
         const attr=p=>({mode:p===dir?0o040755:p.endsWith('link.log')?0o120777:0o100644,size:files.get(p)?.length??0,uid:1000,gid:1000,atime:Math.floor(Date.now()/1000),mtime:1770000000+(p===logPath?1000:Number(p.match(/(\d+)\.log$/)?.[1]??0))});
         s.on('REALPATH',(id,p)=>s.name(id,[{filename:p,longname:p,attrs:attr(p)}]));
@@ -52,9 +41,10 @@ async function fixture(label){
         s.on('OPENDIR',(id,p)=>p===dir?s.handle(id,handle({dir:true,done:false})):s.status(id,2));
         s.on('READDIR',(id,h)=>{const entry=handles.get(h.toString('hex'));if(!entry||entry.done)return s.status(id,1);entry.done=true;
           s.name(id,[...files.keys(),dir+'/link.log'].map(p=>({filename:p.slice(dir.length+1),longname:p,attrs:attr(p)})))});
-        s.on('OPEN',(id,p)=>files.has(p)?s.handle(id,handle({path:p})):s.status(id,2));
-        s.on('READ',(id,h,offset,len)=>{const read=()=>{const file=files.get(handles.get(h.toString('hex'))?.path);if(!file)return s.status(id,2);if(offset>=file.length)return s.status(id,1);s.data(id,file.subarray(offset,offset+len))};if(holdReads)pendingReads.push(read);else read()});
-        s.on('CLOSE',(id,h)=>{handles.delete(h.toString('hex'));s.status(id,0)});
+        s.on('OPEN',(id,p,flags)=>{if(!files.has(p))return s.status(id,2);if(flags!==1)return s.status(id,3);openCount++;s.handle(id,handle({path:p}));track()});
+        s.on('FSTAT',(id,h)=>{const entry=handles.get(h.toString('hex'));entry?.path?s.attrs(id,attr(entry.path)):s.status(id,2)});
+        s.on('READ',(id,h,offset,len)=>{const read=()=>{if(closed)return;const file=files.get(handles.get(h.toString('hex'))?.path);if(!file)return s.status(id,2);if(offset>=file.length)return s.status(id,1);s.data(id,file.subarray(offset,offset+len))};if(holdReads)pendingReads.push(read);else read()});
+        s.on('CLOSE',(id,h)=>{handles.delete(h.toString('hex'));track();s.status(id,0)});
         s.on('EXTENDED',id=>s.status(id,8));
       });
     }));
@@ -138,8 +128,7 @@ try{
   const sharedStatus=await admin.request('/streams/status');assert.equal(sharedStatus.readers,1);assert.equal(sharedStatus.subscriptions,4);
   await new Promise((resolve,reject)=>{hub.stream('Watch',group.id,fa.id).subscribe({next:()=>{},error:resolve,complete:()=>reject(new Error('fifth stream unexpectedly admitted'))})});
   const fullyIdle=async()=>{const s=await admin.request('/streams/status');return s.readers===0&&s.subscriptions===0&&a.active===0&&b.active===0};
-  // The fixture's exec channel closes before the server finishes disposing its
-  // SSH client. Wait for both sides before testing a fresh subscription.
+  // Wait for both the fixture's file handles and the broker to finish releasing.
   subscriptions.forEach(s=>s.dispose());await until(fullyIdle);
   const restarted=hub.stream('Watch',group.id,fa.id).subscribe({next:()=>{},error:error=>{throw error}});await until(()=>a.active===1);restarted.dispose();await until(fullyIdle);
   let forbidden=false;const vh=new HubConnectionBuilder().withUrl(base+'/hubs/logs',{headers:{Cookie:v.cookie()}}).configureLogging(LogLevel.None).build();await vh.start();

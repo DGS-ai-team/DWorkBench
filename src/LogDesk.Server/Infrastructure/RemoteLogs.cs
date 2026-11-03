@@ -1,5 +1,3 @@
-using System.Buffers.Binary;
-using System.Collections.Concurrent;
 using System.IO.Enumeration;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -14,14 +12,6 @@ public record RemoteFile(string Name, string Path, long Size, long ModifiedAt);
 
 public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogReader
 {
-    private static readonly string Follower = LoadFollower();
-    private static string LoadFollower()
-    {
-        using var script = typeof(RemoteLogs).Assembly.GetManifestResourceStream("LogDesk.Server.Infrastructure.follow_log.py")
-            ?? throw new InvalidOperationException("Missing remote log reader.");
-        using var text = new StreamReader(script);
-        return text.ReadToEnd().Replace("\r\n", "\n");
-    }
     private readonly SemaphoreSlim previewSlots = new(4);
     public async Task<object> Preview(Source source, CancellationToken ct)
     {
@@ -32,6 +22,7 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
             timeout.CancelAfter(TimeSpan.FromSeconds(15));
             using var client = await Sftp(source.Host, timeout.Token);
             using var cancel = timeout.Token.Register(() => { try { client.Disconnect(); } catch { } });
+            await SftpLogFollower.CheckPath(client, source.Directory, true, timeout.Token);
             var files = new List<RemoteFile>();
             var examined = 0; var limited = false;
             await foreach (var file in client.ListDirectoryAsync(source.Directory, timeout.Token))
@@ -67,12 +58,12 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
     public async Task<(string? Fingerprint, bool Connected, string Message)> Probe(Host host, CancellationToken ct)
     {
         string? candidate = null;
-        using var client = new SshClient(Info(host));
+        using var client = new SftpClient(Info(host));
         Configure(client, host, fp => candidate = fp);
         try
         {
             await client.ConnectAsync(ct);
-            return (candidate, true, "SSH 认证成功。请继续配置日志源并扫描清单。");
+            return (candidate, true, "SSH/SFTP 连接成功。无需安装远端组件，可继续配置日志源并扫描清单。");
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
@@ -93,6 +84,8 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
     public async IAsyncEnumerable<RemoteFile> List(Source source, [EnumeratorCancellation] CancellationToken ct)
     {
         using var client = await Sftp(source.Host, ct);
+        using var cancel = ct.Register(() => { try { client.Disconnect(); } catch { } });
+        await SftpLogFollower.CheckPath(client, source.Directory, true, ct);
         await foreach (var file in client.ListDirectoryAsync(source.Directory, ct))
         {
             if (file.IsRegularFile && !file.IsSymbolicLink && FileSystemName.MatchesSimpleExpression(source.Pattern, file.Name, false))
@@ -102,68 +95,35 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
     }
     public async Task Download(Source source, FileEntry file, Action<long> begin, Func<ReadOnlyMemory<byte>, CancellationToken, Task> write, CancellationToken ct)
     {
-        if (source.Host.Fingerprint == null) throw new ApiError(409, "请先测试连接并确认 SSH 主机指纹。");
-        using var client = new SshClient(Info(source.Host));
-        Configure(client, source.Host);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
         lifetime.CancelAfter(TimeSpan.FromSeconds(30));
+        using var client = await Sftp(source.Host, lifetime.Token);
         using var disconnect = lifetime.Token.Register(() => { try { client.Disconnect(); } catch { } });
-        await client.ConnectAsync(lifetime.Token);
-        using var command = client.CreateCommand("python3 -u -c " + Rules.Quote(Follower) + " --download " + Rules.Quote(file.Path));
-        var execution = command.ExecuteAsync(lifetime.Token);
-        try
+        using var stream = await SftpLogFollower.OpenChecked(client, file.Path, lifetime.Token);
+        var remaining = stream.Length; // Size belongs to the opened SFTP handle.
+        begin(remaining);
+        var buffer = new byte[64 * 1024];
+        while (remaining > 0)
         {
-            var header = new byte[8];
-            try { await command.OutputStream.ReadExactlyAsync(header, lifetime.Token); }
-            catch (EndOfStreamException) { throw new ApiError(502, "远端下载无法打开文件，请确认 Python 3 可用、文件可读且路径各级均不是符号链接。"); }
-            var length = BinaryPrimitives.ReadInt64BigEndian(header);
-            if (length < 0) throw new ApiError(502, "远端下载返回了无效的文件长度。");
-            begin(length);
-            var buffer = new byte[64 * 1024];
-            while (length > 0)
-            {
-                lifetime.CancelAfter(TimeSpan.FromSeconds(30));
-                var count = await command.OutputStream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, length)), lifetime.Token);
-                if (count == 0) throw new ApiError(409, "远程文件在下载中被截断，请重新下载。");
-                await write(buffer.AsMemory(0, count), lifetime.Token);
-                length -= count;
-            }
-            await execution;
-            if (command.ExitStatus != 0) throw new ApiError(502, "远程文件下载未完成，请重新下载。");
-        }
-        finally
-        {
-            await lifetime.CancelAsync();
-            try { await execution; } catch (Exception) when (lifetime.IsCancellationRequested) { }
+            lifetime.CancelAfter(TimeSpan.FromSeconds(30));
+            var count = await stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, remaining)), lifetime.Token);
+            if (count == 0) throw new ApiError(409, "远程文件在下载中被截断，请重新下载。");
+            await write(buffer.AsMemory(0, count), lifetime.Token);
+            remaining -= count;
         }
     }
     public async IAsyncEnumerable<string> Watch(Source source, FileEntry file, [EnumeratorCancellation] CancellationToken ct)
     {
         var encoding = Rules.StreamEncoding(source.Encoding);
-        using (var sftp = await Sftp(source.Host, ct))
-        {
-            var attributes = await sftp.GetAttributesAsync(file.Path, ct);
-            if (!attributes.IsRegularFile || attributes.IsSymbolicLink) throw new ApiError(409, "目标已不再是普通日志文件，请重新扫描。");
-        }
-        using var client = new SshClient(Info(source.Host));
-        Configure(client, source.Host);
-        await client.ConnectAsync(ct);
-        using var command = client.CreateCommand("python3 -u -c " + Rules.Quote(Follower) + " " + Rules.Quote(file.Path));
+        using var client = await Sftp(source.Host, ct);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var execution = command.ExecuteAsync(lifetime.Token);
         using var disconnect = lifetime.Token.Register(() => { try { client.Disconnect(); } catch { /* Cancellation closes the socket. */ } });
-        using var reader = new StreamReader(command.OutputStream, encoding, false, 8192, true);
         var channel = Channel.CreateBounded<string>(new BoundedChannelOptions(64) { SingleWriter = true, SingleReader = true });
         var producer = Task.Run(async () =>
         {
             try
             {
-                var chars = new char[8192];
-                int count;
-                while ((count = await reader.ReadAsync(chars.AsMemory(), lifetime.Token)) > 0)
-                    if (!channel.Writer.TryWrite(new string(chars, 0, count))) throw new ApiError(429, "日志输出超过当前客户端接收能力，已停止此流以保护内存。请缩小查看范围后重试。");
-                await execution;
-                if (command.ExitStatus != 0) throw new ApiError(502, "远端日志读取已停止，请确认 Python 3 可用、文件可读且路径各级均不是符号链接。");
+                await new SftpLogFollower(client, file.Path, encoding, channel.Writer).Run(lifetime.Token);
                 channel.Writer.TryComplete();
             }
             catch (Exception error) { channel.Writer.TryComplete(error); }
@@ -171,14 +131,12 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
         }, CancellationToken.None);
         try
         {
-            yield return ""; // Acknowledge the established SSH stream before any log lines arrive.
             await foreach (var chunk in channel.Reader.ReadAllAsync(ct)) yield return chunk;
         }
         finally
         {
             await lifetime.CancelAsync();
             await producer;
-            try { await execution; } catch (Exception) when (lifetime.IsCancellationRequested) { }
         }
     }
     public static string SafeError(Exception error) => error switch

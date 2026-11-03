@@ -2,7 +2,7 @@
 
 面向团队的 Linux 日志工作台 MVP。浏览器访问，服务端通过 SSH/SFTP 连接多台 Linux 主机；部署目标为管理网络内现有的 Windows Server 2022 VM。
 
-Linux 目标机需要 **Python 3、SSH 和 SFTP**。实时读取和下载临时执行内置只读脚本，每次打开均拒绝各级路径中的符号链接，并读取已校验的文件描述符；不安装远端代理。流式编码目前支持 UTF-8、GB18030、GB2312/GBK、ISO-8859-1、ASCII；UTF-16/UTF-32 原文件可下载查看。
+Linux 目标机只需已有的 **SSH/SFTP 服务和可读取日志的账号**。清单、下载、实时增量读取统一通过 SFTP，解码与跟随逻辑运行在 LogDesk 服务端；不要求 Python、tail、Shell 执行权限或安装远端组件，不上传脚本/程序。按可信内网主机设计：检查规范路径与普通文件、拒绝发现的符号链接；普通 SFTP 的路径检查不是对恶意并发替换的原子隔离。流式编码支持 UTF-8、GB18030、GB2312/GBK、ISO-8859-1、ASCII；UTF-16/UTF-32 原文件可下载查看。
 
 ## 已实现
 
@@ -15,7 +15,7 @@ Linux 目标机需要 **Python 3、SSH 和 SFTP**。实时读取和下载临时�
 - 清单覆盖打开，保持日志窗格尺寸；切换管理页面保持活动流和有界显示缓冲。
 - 按账号自动保存最近工作台：日志组、关注文件、双窗布局、固定状态、筛选/格式、换行及关注规则；刷新或重新登录后还原布局，点击“恢复接收”重新校验并连接。支持本机未同步草稿和多页面版本冲突提示。
 - 主机测试后直达日志源；目录与文件模式可在保存前做有界 SFTP 预览；日志组直达清单；团队权限显示实际可访问来源。
-- SSH 原始字节下载，长度和内容来自同一个已校验描述符，浏览器接管下载进度；操作审计记录配置变更、权限、扫描、访问和下载结果。
+- SFTP 原始字节下载，长度和内容来自同一个已打开句柄，浏览器接管下载进度；操作审计记录配置变更、权限、扫描、访问和下载结果。
 - Windows 服务安装脚本、自包含发布脚本、Windows/Linux 基础 CI 定义及 PostgreSQL 集成验证。
 
 ## 本地运行
@@ -73,7 +73,7 @@ Windows 开发机还可运行真实 WSL 验证：
 node tests/wsl-integration.mjs
 ```
 
-已在本机 Ubuntu 26.04 WSL2 上通过 OpenSSH、真实 SFTP、uutils/GNU tail 和浏览器双窗格验证，也读取并校验了现有 dpkg 日志。设置 WSL_LOAD=1 可追加 8 账号 / 32 订阅共享读取验证。脚本使用独立数据库、临时 Linux 账号及仅监听回环地址的 SSH 端口，结束时清理 Linux 测试资源，不修改开发预览账号或配置。环境要求和具体结果见 [验证记录](docs/VALIDATION.md)。
+WSL 脚本使用独立数据库、临时 Linux 账号及回环 SSH 端口，并将应用账号限制为 `internal-sftp`，结束时清理 Linux 测试资源。开发机的 Python 仅用于造数和操作测试夹具，不是应用目标机的运行依赖。设置 WSL_LOAD=1 可追加 8 账号 / 32 订阅验证。历史 tail/Python 读取器的结果不能替代当前 SFTP 实现的验收，具体版本与结果见 [验证记录](docs/VALIDATION.md)。
 
 压测运行 `node tests/load.mjs`；可用 `LOAD_SECONDS` 设置每档时长，`LOAD_SHORT=1` 仅运行短档。当前实测覆盖 64 订阅 × 1,000 行/秒、32 订阅 × 5,000 行/秒及真实慢客户端隔离，详见 [性能报告与复现方法](docs/PERFORMANCE.md)。配置上限不等于已测生产容量。
 
@@ -88,4 +88,4 @@ node tests/wsl-integration.mjs
 
 正式支持以 Windows Server 2022 为目标；核心代码使用跨平台 net10.0，Linux 正式部署需补齐目标环境验收。首版不接 SSO 或 Ansible；数据库和应用授权模型为后续集成保留稳定的内部用户/资源 ID。
 
-目前验收覆盖本地构建、受控 SSH/SFTP、SQLite、PostgreSQL、真实 WSL OpenSSH/SFTP、uutils/GNU tail 轮转和 Chromium。目标 Windows VM 的服务安装、组织证书、管理网络内各主机的 SSH 策略、权限与容量仍需在目标环境验收。
+CI 覆盖构建、受控 SFTP、SQLite、PostgreSQL 和 Chromium，最新结果以对应提交的 Checks 为准。SFTP 轮询活跃时约 250ms，空闲时退避至 2s；身份检查约 1–2s。普通 SFTP 不提供统一 inode，内容相同的替换、轮询间多次轮转及快速截断重写不能保证无遗漏。目标 Windows VM 的服务安装、组织证书、管理网络内各主机的 SSH 策略、权限与容量仍需验收。

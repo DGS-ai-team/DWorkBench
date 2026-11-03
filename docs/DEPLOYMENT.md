@@ -60,7 +60,7 @@ MVP 使用一个 Web 服务进程和 PostgreSQL。Linux 目标只需已有的 SS
 
 1. 原生安装受支持版本的 PostgreSQL，配置仅监听 127.0.0.1，并创建独立业务数据库和账号。
 2. 将发布包解压至 D:\LogDesk\app。准备一个团队浏览器信任的 HTTPS RSA 证书，及一个独立的凭据保护 RSA 证书；都导入本地计算机的 My 证书存储，须包含私钥。保留凭据保护证书的受保护导出备份。
-3. 用管理员 PowerShell 执行包内的 Install-Windows.ps1，提供数据库连接字符串、两个证书的指纹，以及允许访问的团队网络地址。
+3. 用管理员 **Windows PowerShell 5.1（powershell.exe）** 执行包内的 Install-Windows.ps1，提供数据库连接字符串、两个证书的指纹，以及允许访问的团队网络地址。构建脚本使用 PowerShell 7；安装脚本使用 Windows 自带的事件日志、证书、服务和防火墙命令。
 
 数据库可通过 PostgreSQL 管理员的 psql 创建（密码交互设置）：
 
@@ -94,6 +94,135 @@ $connection = $null
 配置保存在应用目录下的 appsettings.local.json，包含数据库连接信息和首次初始化令牌，文件访问由专用目录 ACL 保护。证书保护的 key ring 默认在 D:\LogDesk\secrets\keys；数据库密文依赖此 key ring 和保护证书私钥，三者缺一不可。配置中 Protection:CertificatePath/CertificatePassword 也可加载受限 PFX 文件，供后续 Linux 部署适配使用。
 
 安装完成后访问 https://内部域名/api/health，再访问网页完成管理员初始化。首次令牌位于该受保护配置的 Bootstrap.Token。RDP 注销不影响 Windows 服务。
+
+## 离线安装（Windows Server 2022）
+
+适用场景：目标 Windows Server 2022 x64 无互联网访问，但能访问管理网内的 Linux SSH/SFTP，团队浏览器能访问该 VM。采用“联网电脑准备成品 → 传入内网 → 本机安装”的方式。下面的路径、域名和网段均为示例，执行前替换为实际值。
+
+### 1. 在联网电脑准备交付文件
+
+| 文件或信息 | 准备方式 | 是否必需 |
+| --- | --- | --- |
+| `LogDesk.zip`、`LogDesk.zip.sha256` | 下载目标提交成功 CI 的 `LogDesk-win-x64` Artifact，解开 GitHub 外层压缩包后取得这两个文件；或在联网构建机运行 `scripts/Publish-Windows.ps1` | 必需，两者来自同一发布 |
+| PostgreSQL 17 Windows x64 完整安装程序 | 从 PostgreSQL 官方 Windows 下载入口转到 EDB，选择组织批准的 17.x 补丁版本；保存实际版本及 SHA-256 | VM 尚无专用数据库时必需 |
+| HTTPS RSA 证书 PFX | 包含私钥，SAN 覆盖将访问的内部域名，如 `logdesk.example.internal`；PFX 密码另行保管 | 必需，或使用已在 VM 上部署的证书 |
+| 组织根 CA / 中间 CA 的 `.cer` 文件 | 由内部 PKI 管理员提供；客户端和 VM 均需能验证完整证书链 | 使用内部 CA 且尚未信任时必需 |
+| 凭据保护证书 | 首次安装可直接在 VM 上生成；迁移/恢复必须携带原保护证书及私钥、原 key ring 与数据库备份 | 按安装或恢复场景准备 |
+| 交付记录 | Git 提交号、CI 运行号、文件哈希、数据库版本、内部域名、VM 地址、SSH 端口和允许访问的团队网段 | 必需，用于核对与回滚 |
+
+当前 CI 使用 PostgreSQL 17；官方安装器列出该版本支持 Windows Server 2022。获取完整 Windows 安装器，不使用需要在线拉取组件的包管理命令。[PostgreSQL 官方 Windows 下载入口](https://www.postgresql.org/download/windows/)
+
+发布包已包含 .NET 自包含运行时、JS/CSS、Worker 和许可证。目标机不需要 .NET SDK、单独的 ASP.NET Core Runtime / Hosting Bundle、Node.js、npm、Git、Python、WSL 或 IIS；不在目标机执行 `npm ci`、`dotnet restore` 或发布构建。操作系统更新和数据库安装器所需的系统组件通过组织现有离线软件渠道准备；如系统报告缺少原生运行库，按官方依赖说明携带对应完整安装程序，不从第三方网站单独下载 DLL。[Microsoft Windows 依赖说明](https://learn.microsoft.com/en-us/dotnet/core/install/windows)
+
+保留整个发布包目录结构，包括 `wwwroot` 和 `licenses`。不要只复制 EXE，也不要带入开发机 `.local`、开发数据库、密钥或 `appsettings.local.json`。历史 CI Artifact 有保留期限，部署前将所选版本归档到内部软件库。
+
+### 2. 传入内网并校验
+
+把材料复制到受控的暂存目录，例如 `D:\LogDesk-Install`；数据库数据建议放在独立的 `D:\PostgreSQL\17\data`，不要放进应用安装脚本管理 ACL 的 `D:\LogDesk`。在目标 VM 的管理员 Windows PowerShell 5.1 中校验应用包：
+
+```powershell
+$package = 'D:\LogDesk-Install\LogDesk.zip'
+$expectedHash = ((Get-Content -LiteralPath "$package.sha256" -Raw).Trim() -split '\s+')[0]
+$actualHash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash
+if ($expectedHash -notmatch '^[0-9a-fA-F]{64}$' -or $actualHash -ine $expectedHash) {
+    throw '发布包 SHA-256 不匹配，请重新传输并核对来源。'
+}
+# 此命令仅用于首次安装，目标应为新的专用目录。
+if (Test-Path -LiteralPath 'D:\LogDesk\app') { throw '应用目录已存在，请使用下方离线升级步骤。' }
+Expand-Archive -LiteralPath $package -DestinationPath 'D:\LogDesk\app'
+```
+
+同时将 PostgreSQL 等外部安装程序的哈希与联网电脑的交付记录比对。SHA-256 用于核对传输与版本一致性，哈希记录本身应来自可信交付渠道。
+
+如果文件带有互联网下载标记而被执行策略拦截，在核对来源与哈希后使用 `Unblock-File -LiteralPath 'D:\LogDesk\app\Install-Windows.ps1'`。组织要求签名脚本时按组织流程签名，不修改机器级执行策略来绕过要求。
+
+### 3. 安装本机 PostgreSQL
+
+1. 以管理员身份运行带入的 PostgreSQL 完整安装程序。选择 **PostgreSQL Server** 和 **Command Line Tools**；pgAdmin 可选。取消安装结束时启动 **Stack Builder**，LogDesk 不需要额外驱动或插件。Stack Builder 用于下载附加组件，离线安装不使用它。[EDB 安装步骤](https://www.enterprisedb.com/docs/supported-open-source/postgresql/installing/windows/)
+2. 使用独立数据目录、设置数据库管理员密码，端口默认 5432。记录实际服务名和安装路径。
+3. 在该实例的 `postgresql.conf` 设置 `listen_addresses = '127.0.0.1'`；在 `pg_hba.conf` 中按顺序配置匹配的本机口令规则，例如 `host logdesk logdesk_app 127.0.0.1/32 scram-sha-256`，并确认更靠前的规则不会放宽认证。保留数据库管理员所需的本机访问。修改后重启对应 PostgreSQL 服务，不向团队网段开放 5432。
+4. 使用数据库管理员交互登录，按上文 SQL 创建 `logdesk_app` 与空数据库 `logdesk`。再以业务账号确认连接；`-W` 会交互询问密码。
+
+```powershell
+& 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -h 127.0.0.1 -p 5432 -U postgres -d postgres -W
+# 完成建库、用 \q 退出后，确认业务账号可以连接。
+& 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -h 127.0.0.1 -p 5432 -U logdesk_app -d logdesk -W -c 'SELECT current_user, current_database();'
+```
+
+已有专用 PostgreSQL 时可跳过安装程序，仍须准备数据库、授权和连接信息。首次启动由应用建表，不导入开发用 SQLite。
+
+### 4. 配置内网域名、证书与服务
+
+先让团队电脑及 VM 能通过内部 DNS 解析 `logdesk.example.internal`。HTTPS 证书域名必须与访问地址一致；使用内部 IP 直接访问时，该 IP 也必须在证书 SAN 中。
+
+在 VM 的本地计算机证书存储中导入组织根 CA、中间 CA 和含私钥的 HTTPS PFX；根证书仅从组织 PKI 获取。团队电脑也需要信任对应 CA。下面假设各有一个根证书和中间证书，按实际证书链调整：
+
+```powershell
+Import-Certificate -FilePath 'D:\LogDesk-Install\org-root-ca.cer' -CertStoreLocation 'Cert:\LocalMachine\Root'
+Import-Certificate -FilePath 'D:\LogDesk-Install\org-intermediate-ca.cer' -CertStoreLocation 'Cert:\LocalMachine\CA'
+$pfxPassword = Read-Host 'HTTPS PFX password' -AsSecureString
+Import-PfxCertificate -FilePath 'D:\LogDesk-Install\logdesk-https.pfx' -CertStoreLocation 'Cert:\LocalMachine\My' -Password $pfxPassword
+$pfxPassword = $null
+```
+
+记录 HTTPS 叶证书的指纹，确认包含 RSA 私钥、未过期且链有效。首次安装按上文创建独立的 `$protectionCert`，并导出受密码保护的 PFX 备份；它与 HTTPS 证书用途不同。恢复旧环境时导入原保护证书，不能新建一个替代。
+
+目标机不能依赖公网下载中间证书、更新根证书或在线申请证书。使用预先导入的完整链；组织 PKI 若要求 CRL/OCSP 检查，应提供内网可达地址并维护有效数据，不通过关闭证书验证解决离线信任问题。
+
+进入应用目录，按上文安装示例运行服务安装脚本：
+
+```powershell
+Set-Location 'D:\LogDesk\app'
+$secret = Read-Host 'PostgreSQL connection string' -AsSecureString
+$connection = [System.Management.Automation.PSCredential]::new('unused', $secret).GetNetworkCredential().Password
+try {
+    .\Install-Windows.ps1 -DataRoot 'D:\LogDesk' -DatabaseConnectionString $connection -HttpsCertificateThumbprint '<HTTPS_CERT_THUMBPRINT>' -ProtectionCertificateThumbprint '<PROTECTION_CERT_THUMBPRINT>' -AllowedRemoteAddress @('192.168.31.0/24')
+} finally {
+    $connection = $null
+    $secret = $null
+}
+```
+
+安装脚本仅在本机配置服务、目录 ACL、证书私钥权限和 HTTPS 入站规则，不联网安装数据库或依赖。需要允许的通信为：
+
+| 发起方 → 目标 | 端口 / 用途 |
+| --- | --- |
+| 团队浏览器 → Windows VM | TCP 443，HTTPS 与 SignalR；自定义 `-Port` 时同步调整访问 URL |
+| Windows VM → Linux 主机 | TCP 22 或配置的 SSH 端口，SSH/SFTP |
+| LogDesk → 本机 PostgreSQL | 127.0.0.1:5432 或实际数据库端口 |
+| VM / 团队电脑 → 内部基础服务 | 组织的 DNS、时间同步及证书验证服务，按内网策略配置 |
+
+Linux 主机继续使用已有 SSH/SFTP 服务和有读取权限的账号，无需任何远端安装。前端资源由 LogDesk 本机提供，不依赖公网 CDN。
+
+### 5. 安装后检查
+
+```powershell
+Get-Service -Name LogDesk
+Invoke-RestMethod -Uri 'https://logdesk.example.internal/api/health'
+Test-NetConnection -ComputerName '192.168.31.118' -Port 22
+Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'LogDesk' } -MaxEvents 20
+```
+
+服务应为 `Running`，健康接口应返回 `status: ok`，实际 SSH 地址应连通；没有事件记录时日志查询可能提示未找到记录。健康接口只表示应用响应，不代表所有 Linux 主机或日志都已验证。继续在团队电脑上完成：
+
+1. 通过相同 HTTPS 域名打开页面，确认无证书告警、静态资源正常加载。
+2. 在 VM 上读取受保护的 `D:\LogDesk\app\appsettings.local.json` 中的 `Bootstrap.Token`，完成首次管理员创建；不把整个配置文件复制给团队。
+3. 添加一台授权的 Linux 主机，核对并确认指纹，测试连接；配置来源和组，扫描、查看追加内容、下载一个日志，并查看审计。
+4. 注销 RDP 后再次通过团队浏览器访问，确认服务持续运行。
+
+常见阻塞点：服务启动失败先查 PostgreSQL、连接字符串和 LogDesk 事件日志；证书报错检查本机证书存储、RSA 私钥权限、完整链、域名及系统时间；远端连接失败检查管理网络、SSH 端口、账号和 SFTP 是否启用。不要切换到 Development 或绕过 HTTPS 作为生产安装的替代。
+
+以上为离线部署操作步骤，仓库 CI 未替代目标 Windows Server 2022 的断网安装验收。本轮仅补充说明，未在目标 VM 执行安装。
+
+### 6. 离线升级与回滚
+
+1. 在联网电脑取得新版本发布包与哈希，按同样方式传入和校验；保存旧版本包、提交号及配置。
+2. 停止 `LogDesk`，备份 PostgreSQL、`appsettings.local.json`、`secrets\keys` 及原保护证书私钥。敏感备份置于受控目录并另存 VM 之外。
+3. 将新包解压到新的专用目录，例如 `D:\LogDesk\app-next`；保留旧程序目录。将受保护的旧 `appsettings.local.json` 复制到新目录，沿用原 `DataRoot`、证书和数据库。不要把新目录设成数据库目录或密钥目录。
+4. 在新目录运行 `Install-Windows.ps1`，传入原数据库、两个证书指纹、端口和允许网段。脚本会更新服务程序路径，并重写基础配置；若旧配置中有自定义 `Limits` 等附加项，先记录，安装后合并回新配置并重启服务。新旧实例不能同时连接数据库做升级。
+5. 执行上方检查并刷新浏览器。失败时停止新服务，按旧包与保存的参数重新指向旧目录；若数据库 schema 已升级，先按版本说明恢复升级前数据库，再启动匹配的旧程序，不手工降低 schema 标识。
+
+自包含运行时随新发布包更新；数据库、操作系统和证书的离线更新分别按各自生命周期维护。保护证书及 key ring 必须与数据库密文配套保留。
 
 ## 运行、备份与限制
 

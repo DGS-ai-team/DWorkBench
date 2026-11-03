@@ -1,0 +1,40 @@
+# .NET / Visual Studio
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+TestResults/
+artifacts/
+publish/
+
+# Local settings, credentials, and signing material
+.env
+.env.*
+*.local.json
+*.dpapi
+credentials/
+secrets/
+*.pfx
+*.p12
+
+# OS/editor noise
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+
+# Toolchain, frontend and runtime state
+.tools/
+.local/
+node_modules/
+dist/
+playwright-report/
+test-results/
+*.db
+*.db-shm
+*.db-wal
+src/LogDesk.Server/wwwroot/
+*.tsbuildinfo

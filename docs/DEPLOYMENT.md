@@ -58,7 +58,11 @@ MVP 使用一个 Web 服务进程和 PostgreSQL。Linux 目标只需已有的 SS
 
 生成 `artifacts/windows/DWorkBench.zip` 及 `.sha256`，包含 win-x64 自包含应用、前端静态文件、下方安装脚本、部署文档、许可证、`RELEASE-NOTES.md` 和 `release-info.json`。后者记录版本、Git 提交、运行目标、构建时间和工作区是否有未提交修改。运行节点不需要 Node 或 .NET SDK。自包含运行时的更新通过重新发布完成。
 
-构建输出必须是空的专用目录；重复构建请指定新的 `-Output`，避免混入旧配置或文件。`v0.1.0` 标签通过 Windows、Ubuntu 和 PostgreSQL CI 后，发布任务使用同次 CI 的 Windows ZIP，发布为 `DWorkBench-v0.1.0-win-x64.zip` 及配套哈希；不重新编译另一个未经该流水线检查的包。
+构建输出必须是空的专用目录；重复构建请指定新的 `-Output`，避免混入旧配置或文件。默认执行 `npm ci` 和前端构建。CI 在同一任务、同一 checkout 已完成这两步时使用 `-SkipClientBuild`，复用本次生成的前端；该选项要求保留 `wwwroot/index.html` 和已安装的 `node_modules`（包括 npm 安装记录），以供包检查与许可证收集。它不核验文件是否来自当前提交，不能用于复用旧工作区或其他提交的静态文件；本地构建通常不要加此参数。
+
+后续版本标签优先复用同一 Git 提交已通过完整基线的 `main` 推送产物。复用时核对运行来源与成功状态、`Release qualification` 检查、包内版本/提交/构建范围信息和 SHA-256；不会采用 PR 或其他提交的包。主干任务仍在运行时进行有上限的等待，没有合格包或超过 30 天保留期限时，重新执行完整基线并由验证汇总确认成功后发布。`release-info.json` 的可选 `ciQualification` 只记录请求的构建范围，不能单独证明 CI 成功；普通本地构建不写入此字段。完整规则见仓库的 [CI 执行策略](https://github.com/DGS-ai-team/DWorkBench/blob/main/docs/CI.md)。
+
+公开资产使用 `DWorkBench-v<版本>-win-x64.zip` 和配套 `.sha256`；发布流程不在校验完成后再次编译。已发布的 v0.1.0 保留原有资产与发布记录，不因 CI 策略调整而重新打包。
 
 ## Windows Server 2022 安装
 
@@ -305,7 +309,7 @@ node tests/integration.mjs
 
 开发机安装 WSL 时，可另运行 node tests/wsl-integration.mjs，验证真实 OpenSSH/SFTP。脚本创建独立应用数据库、临时账号和回环 SSH 端口，并通过 ForceCommand internal-sftp 禁用应用账号的命令执行。WSL 管理端用 Python 准备/修改测试文件，应用连接不使用该解释器；正式运行不需要 WSL 或 Python。结束后清理 Linux 测试资源。历史验证版本与清理范围见 [验证记录](VALIDATION.md#本机-wsl-实测)。
 
-PostgreSQL 验证需要一个全新的测试数据库，设置 TEST_DATABASE_PROVIDER=Postgres 和 ConnectionStrings__DWorkBench 后运行同一脚本。不要指向业务数据库。CI 定义包含 Windows/Linux 基础验证和单独 PostgreSQL 验证；新增 workflow 只有推送到 GitHub 后才会执行，不能将定义存在视为 CI 已通过。
+PostgreSQL 验证需要一个全新的测试数据库，设置 TEST_DATABASE_PROVIDER=Postgres 和 ConnectionStrings__DWorkBench 后运行同一脚本。不要指向业务数据库。CI 按变更范围选择 Windows/Linux 与 PostgreSQL 检查，完整基线包含三者，浏览器主要在 Ubuntu 上运行；手动 `extended` 可增加 Windows 浏览器与完整负载。Windows 发布包检查使用 Development/SQLite，仅证明程序及静态资源可启动；安装脚本的 PowerShell 5.1 检查只解析语法，不安装服务、配置 TLS 或初始化生产数据库。目标 VM 的正式安装仍需单独验收。workflow 定义存在不代表已通过，须查看该提交的 Actions 结果。
 
 
 ## 关注列表与目录预览（内部迭代 0.7 引入）

@@ -2,186 +2,91 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Verification scope
+        type: choice
+        options: [full, extended]
+        default: full
 permissions:
   contents: read
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  core:
-    name: Build and regression (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
-    env:
-      DOTNET_EXE: dotnet
-      DOTNET_NOLOGO: 'true'
-      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  plan:
+    name: Select checks and inspect documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      linux: ${{ steps.scope.outputs.linux }}
+      browser: ${{ steps.scope.outputs.browser }}
+      windows: ${{ steps.scope.outputs.windows }}
+      postgres: ${{ steps.scope.outputs.postgres }}
+      package: ${{ steps.scope.outputs.package }}
+      load: ${{ steps.scope.outputs.load }}
+      profile: ${{ steps.scope.outputs.profile }}
     steps:
       - uses: actions/checkout@v4
-      - name: Validate release tag
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Classify changes conservatively
+        id: scope
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          CI_PROFILE: ${{ inputs.profile || 'auto' }}
+        run: node scripts/ci/classify.mjs
+      - name: Check local documentation links and conflict markers
+        run: node scripts/ci/check-docs.mjs
+  checks:
+    name: Selected verification
+    needs: plan
+    uses: ./.github/workflows/verify.yml
+    with:
+      linux: ${{ needs.plan.outputs.linux == 'true' }}
+      browser: ${{ needs.plan.outputs.browser == 'true' }}
+      windows: ${{ needs.plan.outputs.windows == 'true' }}
+      postgres: ${{ needs.plan.outputs.postgres == 'true' }}
+      package: ${{ needs.plan.outputs.package == 'true' }}
+      load: ${{ needs.plan.outputs.load == 'true' }}
+      extended: ${{ github.event_name == 'workflow_dispatch' && inputs.profile == 'extended' }}
+  qualification:
+    name: Release qualification
+    needs: [plan, checks]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.checks.outputs.qualified == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Record successful main release baseline
+        run: echo 'This exact main commit passed the full release baseline.'
+  result:
+    name: CI result
+    needs: [plan, checks, qualification]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every selected check to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          MAIN_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
-          $project = [xml](Get-Content src/DWorkBench.Server/DWorkBench.Server.csproj -Raw)
-          $version = [string]$project.Project.PropertyGroup.Version
-          $client = Get-Content src/DWorkBench.Client/package.json -Raw | ConvertFrom-Json
-          if ($env:RELEASE_TAG -cne "v$version" -or $version -notmatch '^\d+\.\d+\.\d+$' -or $client.version -cne $version) {
-            throw 'Release tag, server version and client version must match.'
+          node <<'NODE'
+          const needs = JSON.parse(process.env.NEEDS_JSON);
+          for (const job of ['plan', 'checks']) {
+            if (needs[job].result !== 'success') throw new Error(`${job}: ${needs[job].result}`);
           }
-          if (-not (Test-Path -LiteralPath "docs/releases/$($env:RELEASE_TAG).md")) { throw 'Release notes are missing.' }
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: src/DWorkBench.Client/package-lock.json
-      - name: Install client dependencies
-        run: npm ci
-        working-directory: src/DWorkBench.Client
-      # Vite generates wwwroot; finish before ASP.NET computes static assets.
-      - name: Build client
-        run: npm run build
-        working-directory: src/DWorkBench.Client
-      - run: dotnet build src/DWorkBench.Server --nologo
-      - run: dotnet run --project tests/DWorkBench.CoreChecks
-      - run: node tests/log-processing.mjs
-      - run: node tests/log-activity.mjs
-      - run: npx playwright install chromium --with-deps
-        working-directory: src/DWorkBench.Client
-      - name: SQLite, SSH and browser regression
-        run: node tests/integration.mjs
-      - name: Shared stream load smoke
-        run: node tests/load.mjs
-        env:
-          LOAD_SHORT: '1'
-          LOAD_SECONDS: '5'
-          SKIP_BROWSER: '1'
-      - name: Publish Windows self-contained package
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/Publish-Windows.ps1
-      - name: Check Windows package
-        if: runner.os == 'Windows'
-        run: node tests/package.mjs
-      - name: Upload Windows package
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: DWorkBench-win-x64
-          path: |
-            artifacts/windows/DWorkBench.zip
-            artifacts/windows/DWorkBench.zip.sha256
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload diagnostics
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: diagnostics-${{ matrix.os }}
-          # Explicit files only: never upload databases, cookies or keys.
-          path: |
-            .local/mvp-*.png
-            .local/load-results.json
-            .local/integration-*/server.log
-            .local/load-shared-*/server.log
-            .local/package-*/server.log
-          include-hidden-files: true
-          if-no-files-found: ignore
-          retention-days: 7
-  release:
-    name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
-    needs: [core, postgres]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: DWorkBench-win-x64
-          path: release-assets
-      - name: Prepare verified release assets
-        shell: pwsh
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          ./deploy/Verify-Package.ps1 -PackagePath release-assets/DWorkBench.zip
-          $name = "DWorkBench-$($env:RELEASE_TAG)-win-x64.zip"
-          Move-Item -LiteralPath release-assets/DWorkBench.zip -Destination "release-assets/$name"
-          Remove-Item -LiteralPath release-assets/DWorkBench.zip.sha256
-          $hash = (Get-FileHash -LiteralPath "release-assets/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $name" | Set-Content -LiteralPath "release-assets/$name.sha256" -Encoding ascii
-          Copy-Item -LiteralPath deploy/Verify-Package.ps1 -Destination release-assets
-          Copy-Item -LiteralPath deploy/QUICKSTART.zh-CN.md -Destination release-assets
-      - name: Publish GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          gh release create "$RELEASE_TAG" release-assets/* \
-            --verify-tag --title "DWorkBench $RELEASE_TAG" \
-            --notes-file "docs/releases/$RELEASE_TAG.md" --latest
-  postgres:
-    name: PostgreSQL regression
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_DB: dworkbench_test
-          POSTGRES_USER: dworkbench_test
-          POSTGRES_PASSWORD: integration-only-password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U dworkbench_test -d dworkbench_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: src/DWorkBench.Client/package-lock.json
-      - run: npm ci
-        working-directory: src/DWorkBench.Client
-      - run: npm run build
-        working-directory: src/DWorkBench.Client
-      - run: dotnet build src/DWorkBench.Server --nologo
-      - name: PostgreSQL, authorization and workspace regression
-        run: node tests/integration.mjs
-        env:
-          DOTNET_EXE: dotnet
-          SKIP_BROWSER: '1'
-          TEST_DATABASE_PROVIDER: Postgres
-          ConnectionStrings__DWorkBench: Host=127.0.0.1;Port=5432;Database=dworkbench_test;Username=dworkbench_test;Password=integration-only-password
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: diagnostics-postgres
-          path: .local/integration-*/server.log
-          include-hidden-files: true
-          if-no-files-found: ignore
-          retention-days: 7
+          const flags = ['linux', 'browser', 'windows', 'postgres', 'package', 'load'];
+          const scope = needs.plan.outputs;
+          if (flags.some(flag => !['true', 'false'].includes(scope[flag]))) throw new Error('Invalid or missing scope output');
+          const full = flags.every(flag => scope[flag] === 'true');
+          if (needs.checks.outputs.qualified !== String(full)) throw new Error('Verification qualification disagrees with selected scope');
+          const expected = process.env.MAIN_PUSH === 'true' && full ? 'success' : 'skipped';
+          if (needs.qualification.result !== expected) throw new Error(`Release qualification: expected ${expected}, got ${needs.qualification.result}`);
+          console.log(`CI passed (${scope.profile}). All selected checks succeeded.`);
+          NODE

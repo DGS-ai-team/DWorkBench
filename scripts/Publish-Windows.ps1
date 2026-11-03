@@ -1,5 +1,9 @@
 #Requires -Version 7.0
-param([string]$Output)
+param(
+    [string]$Output,
+    [switch]$SkipClientBuild,
+    [ValidateSet('dworkbench-release-v1')][string]$CiQualification
+)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 if (-not $Output) { $Output = Join-Path $repo 'artifacts/windows/DWorkBench' }
@@ -20,18 +24,35 @@ $dirty = @(& git -C $repo status --porcelain).Count -ne 0
 if ($LASTEXITCODE) { throw 'Unable to inspect source state.' }
 $localDotnet = Join-Path $repo '.tools/dotnet/dotnet.exe'
 $dotnet = if (Test-Path -LiteralPath $localDotnet) { $localDotnet } else { 'dotnet' }
-Push-Location (Join-Path $repo 'src/DWorkBench.Client')
-try { & npm.cmd ci; if ($LASTEXITCODE) { throw 'npm ci failed' }; & npm.cmd run build; if ($LASTEXITCODE) { throw 'Frontend build failed' } } finally { Pop-Location }
+$clientRoot = Join-Path $repo 'src/DWorkBench.Client'
+if ($SkipClientBuild) {
+    # CI may reuse only the frontend built earlier in this job from this checkout.
+    # Keep node_modules for package checks and third-party license collection.
+    $clientIndex = Join-Path $repo 'src/DWorkBench.Server/wwwroot/index.html'
+    $nodeModules = Join-Path $clientRoot 'node_modules'
+    if (-not (Test-Path -LiteralPath $clientIndex -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $nodeModules -PathType Container) -or
+        -not (Test-Path -LiteralPath (Join-Path $nodeModules '.package-lock.json') -PathType Leaf)) {
+        throw '-SkipClientBuild requires npm ci and npm run build to have completed in this checkout, with wwwroot/index.html and installed node_modules retained. Omit the switch to build them automatically.'
+    }
+} else {
+    Push-Location $clientRoot
+    try { & npm.cmd ci; if ($LASTEXITCODE) { throw 'npm ci failed' }; & npm.cmd run build; if ($LASTEXITCODE) { throw 'Frontend build failed' } } finally { Pop-Location }
+}
 & $dotnet publish (Join-Path $repo 'src/DWorkBench.Server') -c Release -r win-x64 --self-contained true -o $Output --nologo
 if ($LASTEXITCODE) { throw 'Publish failed' }
 foreach ($file in @('Install.cmd', 'Start-Install.ps1', 'Install-Windows.ps1', 'Initialize-Database.ps1', 'Check-Installation.ps1', 'Verify-Package.ps1', 'QUICKSTART.zh-CN.md')) {
     Copy-Item -LiteralPath (Join-Path $repo "deploy/$file") -Destination $Output
 }
 Copy-Item -LiteralPath $notes -Destination (Join-Path $Output 'RELEASE-NOTES.md')
-@{
+$releaseInfo = @{
     product = 'DWorkBench'; version = $version; runtime = 'win-x64'; selfContained = $true
     commit = $revision.Trim(); workingTreeDirty = $dirty; builtAtUtc = [DateTime]::UtcNow.ToString('o')
-} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Output 'release-info.json') -Encoding utf8
+}
+# This records the requested CI scope; release reuse also requires the originating
+# main run and its Release qualification job to have completed successfully.
+if ($CiQualification) { $releaseInfo.ciQualification = $CiQualification }
+$releaseInfo | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Output 'release-info.json') -Encoding utf8
 Copy-Item -LiteralPath (Join-Path $repo 'docs/DEPLOYMENT.md') -Destination $Output
 Copy-Item -LiteralPath (Join-Path $repo 'docs/VALIDATION.md') -Destination $Output
 Copy-Item -LiteralPath (Join-Path $repo 'docs/PERFORMANCE.md') -Destination $Output

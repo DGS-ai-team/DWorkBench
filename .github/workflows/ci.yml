@@ -2,6 +2,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 permissions:
@@ -24,6 +25,19 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
     steps:
       - uses: actions/checkout@v4
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $project = [xml](Get-Content src/DWorkBench.Server/DWorkBench.Server.csproj -Raw)
+          $version = [string]$project.Project.PropertyGroup.Version
+          $client = Get-Content src/DWorkBench.Client/package.json -Raw | ConvertFrom-Json
+          if ($env:RELEASE_TAG -cne "v$version" -or $version -notmatch '^\d+\.\d+\.\d+$' -or $client.version -cne $version) {
+            throw 'Release tag, server version and client version must match.'
+          }
+          if (-not (Test-Path -LiteralPath "docs/releases/$($env:RELEASE_TAG).md")) { throw 'Release notes are missing.' }
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
@@ -85,6 +99,43 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    needs: [core, postgres]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: DWorkBench-win-x64
+          path: release-assets
+      - name: Prepare verified release assets
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./deploy/Verify-Package.ps1 -PackagePath release-assets/DWorkBench.zip
+          $name = "DWorkBench-$($env:RELEASE_TAG)-win-x64.zip"
+          Move-Item -LiteralPath release-assets/DWorkBench.zip -Destination "release-assets/$name"
+          Remove-Item -LiteralPath release-assets/DWorkBench.zip.sha256
+          $hash = (Get-FileHash -LiteralPath "release-assets/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name" | Set-Content -LiteralPath "release-assets/$name.sha256" -Encoding ascii
+          Copy-Item -LiteralPath deploy/Verify-Package.ps1 -Destination release-assets
+          Copy-Item -LiteralPath deploy/QUICKSTART.zh-CN.md -Destination release-assets
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --verify-tag --title "DWorkBench $RELEASE_TAG" \
+            --notes-file "docs/releases/$RELEASE_TAG.md" --latest
   postgres:
     name: PostgreSQL regression
     runs-on: ubuntu-latest

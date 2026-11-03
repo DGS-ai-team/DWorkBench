@@ -15,10 +15,11 @@ def open_regular(path):
     parts = path.split("/")
     if not path.startswith("/") or any(p in (".", "..") for p in parts):
         raise ValueError("invalid absolute path")
-    directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    # O_PATH requires traversal permission without requiring directory listing.
+    directory = os.open("/", os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
     try:
         for component in [p for p in parts[1:-1] if p]:
-            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+            child = os.open(component, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
             os.close(directory)
             directory = child
         fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=directory)

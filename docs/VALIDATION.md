@@ -203,3 +203,5 @@ node tests/wsl-integration.mjs
 - Broker 在容量和定时刷新边界保留末尾高代理项，下一块到达后成对发送，避免 emoji 被 JSON 序列化为替换字符。新增逐帧 JSON 往返、32,768 字符边界、跨输入块、定时刷新和回放一致性回归。
 
 最新本地 .NET 构建、Broker 全套回归、Linux 原生四项读取器测试及 SQLite 接口回归均通过。真实 WSL 再次验证缓存清单后父目录被替换为链接时下载拒绝且无外部内容泄漏，其余扫描、下载 SHA-256、跟随与清理回归也通过，报告位于 `.local/wsl-integration-Ctf2NW/result.json`。浏览器与 PostgreSQL 继续由最新提交的 CI 执行。
+
+后续兼容性复查：祖先目录使用 Linux `O_PATH | O_DIRECTORY | O_NOFOLLOW` 描述符，支持账号仅有搜索/穿越权限、没有目录列举权限的合法路径；末级文件仍要求可读普通文件。新增 mode-0111 祖先目录下的直接读取、快照和下载一致性回归，并以 WSL 非特权 `nobody` 用户运行全部五项原生读取器测试。

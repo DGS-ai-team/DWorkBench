@@ -17,6 +17,28 @@ spec.loader.exec_module(reader)
 
 
 class FollowChecks(unittest.TestCase):
+    def test_search_only_ancestor(self):
+        with tempfile.TemporaryDirectory() as root:
+            ancestor = Path(root) / "search-only"
+            logs = ancestor / "logs"
+            logs.mkdir(parents=True)
+            log = logs / "app.log"
+            content = b"readable via search-only ancestor\n"
+            log.write_bytes(content)
+            ancestor.chmod(0o111)
+            try:
+                self.assertEqual(log.read_bytes(), content)
+                fd = reader.open_regular(str(log))
+                try:
+                    self.assertEqual(reader.snapshot(fd), content)
+                finally:
+                    os.close(fd)
+                result = subprocess.run([sys.executable, "-u", str(SCRIPT), "--download", str(log)], capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, len(content).to_bytes(8, "big") + content)
+            finally:
+                ancestor.chmod(0o700)
+
     def test_download_rejects_links_and_keeps_validated_descriptor(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / "logs"

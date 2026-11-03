@@ -9,7 +9,7 @@ namespace LogDesk;
 
 // Runs entirely on the LogDesk server. SFTP v3 has no portable inode or atomic
 // no-follow open: canonical-path checks detect observed links, not hostile races.
-internal sealed class SftpLogFollower(SftpClient client, string path, Encoding encoding, ChannelWriter<string> output)
+internal sealed class SftpLogFollower(SftpClient client, string path, Encoding encoding, ChannelWriter<RemoteLogChunk> output)
 {
     private const int AnchorBytes = 256;
     private readonly byte[] buffer = new byte[8192];
@@ -45,9 +45,9 @@ internal sealed class SftpLogFollower(SftpClient client, string path, Encoding e
         catch { await stream.DisposeAsync(); throw; }
     }
 
-    private void Publish(string text)
+    private void Publish(string text, bool snapshotTruncated = false)
     {
-        if (!output.TryWrite(text))
+        if (!output.TryWrite(new(text, snapshotTruncated)))
             throw new ApiError(429, "日志输出超过接收能力，已停止此流。请缩小查看范围后重试。");
     }
 
@@ -128,9 +128,16 @@ internal sealed class SftpLogFollower(SftpClient client, string path, Encoding e
         suffix = bytes[^Math.Min(AnchorBytes, bytes.Length)..];
         var first = 0;
         if (start > 0) { var newline = Array.IndexOf(bytes, (byte)'\n'); first = newline < 0 ? bytes.Length : newline + 1; }
-        var lines = 0;
+        var lines = bytes.Length > first ? 1 : 0;
         for (var i = bytes.Length - 1; i >= first; i--)
-            if (bytes[i] == '\n' && i != bytes.Length - 1 && ++lines == 200) { first = i + 1; break; }
+        {
+            if (bytes[i] != '\n' || i == bytes.Length - 1) continue;
+            if (lines == 200) { first = i + 1; break; }
+            lines++;
+        }
+        // Ordinary selection of the last 200 lines is expected. Report when the
+        // byte window prevents returning those lines, even if zero text remains.
+        if (start > 0 && lines < 200) Publish("", snapshotTruncated: true);
         // Decode in bounded chunks, retaining multibyte characters across them.
         for (var offset = first; offset < bytes.Length; offset += buffer.Length)
             Decode(bytes.AsSpan(offset, Math.Min(buffer.Length, bytes.Length - offset)));

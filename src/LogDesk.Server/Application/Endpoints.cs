@@ -342,7 +342,13 @@ public static class Endpoints
                 ctx.Response.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment") { FileNameStar = file.Name }.ToString();
             }, async (chunk, transferToken) =>
             {
-                if (DateTimeOffset.UtcNow >= recheckAt) { await access.File(await access.User(user.Id), id, fileId, "download"); recheckAt = DateTimeOffset.UtcNow.AddSeconds(5); }
+                if (DateTimeOffset.UtcNow >= recheckAt)
+                {
+                    var current = await access.User(user.Id);
+                    if (current.SecurityStamp != stamp) throw new ApiError(401, "登录已失效，请重新登录。");
+                    await access.File(current, id, fileId, "download");
+                    recheckAt = DateTimeOffset.UtcNow.AddSeconds(5);
+                }
                 await ctx.Response.Body.WriteAsync(chunk, transferToken);
             }, ctx.RequestAborted);
             await audit.Write(user, "download.completed", $"{source.Host.Name}:{file.Path}");

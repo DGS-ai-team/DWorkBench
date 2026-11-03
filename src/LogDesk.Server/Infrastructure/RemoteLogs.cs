@@ -112,7 +112,7 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
             remaining -= count;
         }
     }
-    public async IAsyncEnumerable<string> Watch(Source source, FileEntry file, [EnumeratorCancellation] CancellationToken ct)
+    public async IAsyncEnumerable<RemoteLogChunk> Watch(Source source, FileEntry file, [EnumeratorCancellation] CancellationToken ct)
     {
         var encoding = Rules.StreamEncoding(source.Encoding);
         using var client = await Sftp(source.Host, ct);
@@ -120,7 +120,7 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
         // Let the producer cancel reads and close its handles before disconnecting.
         // Disconnecting from the cancellation callback races SFTP CLOSE replies;
         // an outstanding synchronous metadata request remains bounded by OperationTimeout.
-        var channel = Channel.CreateBounded<string>(new BoundedChannelOptions(64) { SingleWriter = true, SingleReader = true });
+        var channel = Channel.CreateBounded<RemoteLogChunk>(new BoundedChannelOptions(64) { SingleWriter = true, SingleReader = true });
         var producer = Task.Run(async () =>
         {
             try

@@ -201,11 +201,11 @@ sealed class FakeReader : IRemoteLogReader
     public int Starts => Volatile.Read(ref starts);
     public void Feed(string text, string? path = null) { foreach (var entry in channels.Values) if (path == null || entry.Path == path) entry.Queue.Writer.TryWrite(text); }
     public void Fail(string path) { foreach (var entry in channels.Values) if (entry.Path == path) entry.Queue.Writer.TryComplete(new IOException("Simulated upstream disconnect")); }
-    public async IAsyncEnumerable<string> Watch(Source source, FileEntry file, [EnumeratorCancellation] CancellationToken cancellationToken)
+    public async IAsyncEnumerable<RemoteLogChunk> Watch(Source source, FileEntry file, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var id = Guid.NewGuid(); var channel = Channel.CreateUnbounded<string>();
         channels[id] = (file.Path, channel); Interlocked.Increment(ref starts);
-        try { yield return ""; await foreach (var text in channel.Reader.ReadAllAsync(cancellationToken)) yield return text; }
+        try { yield return new(""); await foreach (var text in channel.Reader.ReadAllAsync(cancellationToken)) yield return new(text); }
         finally { channels.TryRemove(id, out _); }
     }
 }

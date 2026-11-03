@@ -7,8 +7,12 @@ namespace LogDesk;
 
 public interface IRemoteLogReader
 {
-    IAsyncEnumerable<string> Watch(Source source, FileEntry file, CancellationToken cancellationToken);
+    IAsyncEnumerable<RemoteLogChunk> Watch(Source source, FileEntry file, CancellationToken cancellationToken);
 }
+
+// Keep reader metadata separate from log text, including omissions that occur
+// before the broker's character-based replay buffer sees the snapshot.
+public readonly record struct RemoteLogChunk(string Text, bool SnapshotTruncated = false);
 
 public sealed record LogFrame(string Kind, long Sequence, string Text = "", string? Message = null);
 
@@ -27,6 +31,7 @@ public sealed record LogReaderKey(Guid HostId, string Identity, string Path, str
 
 public sealed class SharedLogBroker : IHostedService
 {
+    private const string SnapshotCapacityMessage = "初始快照达到容量上限，较早的内容未包含；可下载原文件查看。";
     private readonly object gate = new();
     private readonly Dictionary<LogReaderKey, Reader> readers = [];
     private readonly HashSet<Subscription> reservations = [];
@@ -71,8 +76,8 @@ public sealed class SharedLogBroker : IHostedService
             if (reader.Ready)
             {
                 Enqueue(reader, subscription, new("ready", reader.Sequence));
-                if (reader.History.Truncated)
-                    Enqueue(reader, subscription, new("notice", reader.Sequence, Message: "初始快照达到容量上限，较早的内容未包含；可下载原文件查看。"));
+                if (reader.InitialSnapshotTruncated || reader.History.Truncated)
+                    Enqueue(reader, subscription, new("notice", reader.Sequence, Message: SnapshotCapacityMessage));
                 var snapshot = reader.History.Snapshot();
                 if (snapshot.Length > 0) Enqueue(reader, subscription, new("snapshot", reader.Sequence, snapshot));
             }
@@ -87,10 +92,16 @@ public sealed class SharedLogBroker : IHostedService
         var flush = FlushPeriodically(reader, flushCancellation.Token);
         try
         {
-            await foreach (var text in remote.Watch(reader.Source, reader.File, reader.Lifetime.Token))
+            await foreach (var chunk in remote.Watch(reader.Source, reader.File, reader.Lifetime.Token))
             {
                 lock (gate)
                 {
+                    if (chunk.SnapshotTruncated && !reader.InitialSnapshotTruncated)
+                    {
+                        reader.InitialSnapshotTruncated = true;
+                        Broadcast(reader, new("notice", reader.Sequence, Message: SnapshotCapacityMessage));
+                    }
+                    var text = chunk.Text;
                     if (text.Length == 0)
                     {
                         if (!reader.Ready)
@@ -310,7 +321,7 @@ public sealed class SharedLogBroker : IHostedService
         internal Task IdleTask = Task.CompletedTask;
         internal CancellationTokenSource? IdleCancellation;
         internal long Sequence;
-        internal bool Ready, Closing;
+        internal bool Ready, Closing, InitialSnapshotTruncated;
     }
 }
 

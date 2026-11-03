@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import path from "node:path";
 import net from "node:net";
+import { remoteCommand } from './remote-command.mjs';
 export const root = process.cwd();
 export const require = createRequire(
   path.join(root, "src/LogDesk.Client/package.json"),
@@ -221,7 +222,7 @@ export async function sshFixture(name = "bench.log") {
       client.on("session", (accept) => {
         const session = accept();
         session.on("exec", (accept, reject, info) => {
-          if (info.command !== `tail -n 200 -F -- '${filename}'`)
+          if (info.command !== remoteCommand(filename))
             return reject();
           const stream = accept();
           starts++;

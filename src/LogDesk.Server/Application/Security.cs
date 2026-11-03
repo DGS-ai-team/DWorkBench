@@ -39,6 +39,15 @@ public static class Rules
         try { return System.Text.Encoding.GetEncoding(name); }
         catch (ArgumentException) { throw new ApiError(400, "不支持的日志编码。"); }
     }
+    public static Encoding StreamEncoding(string name)
+    {
+        var encoding = Encoding(name);
+        // Snapshot boundaries are LF bytes. Only admit encodings whose LF is
+        // a standalone byte, including the explicitly supported Chinese codecs.
+        if (encoding.CodePage is not (65001 or 936 or 54936 or 28591 or 20127))
+            throw new ApiError(400, "流式日志仅支持 UTF-8、GB18030、GB2312/GBK、ISO-8859-1 和 ASCII；UTF-16/UTF-32 请下载原文件查看。");
+        return encoding;
+    }
 }
 
 public static class UserContext
@@ -109,5 +118,16 @@ public sealed class AccessService(IDbContextFactory<AppDb> factory, AuditWriter 
         var groupIds = await db.GroupSources.Where(x => x.SourceId == source.Id).Select(x => x.GroupId).ToListAsync();
         if (!grants.Any(x => x.Scope == "host" && x.ResourceId == source.HostId) || groupIds.Any(g => !grants.Any(x => x.Scope == "group" && x.ResourceId == g)))
             await Deny(user, $"source:{source.Id}");
+    }
+    public async Task ManageGroupSources(AppUser user, Guid groupId, Guid[] sourceIds)
+    {
+        if (user.Role == "Admin") return;
+        if (user.Role != "Maintainer") await Deny(user, "group.update");
+        using var db = await factory.CreateDbContextAsync();
+        var grants = await db.Grants.Where(g => g.UserId == user.Id && g.Manage).ToListAsync();
+        if (!grants.Any(g => g.Scope == "group" && g.ResourceId == groupId)) await Deny(user, "group.update");
+        var sources = await db.Sources.Where(s => sourceIds.Contains(s.Id)).ToListAsync();
+        if (sources.Count != sourceIds.Length || sources.Any(s => !grants.Any(g => g.Scope == "host" && g.ResourceId == s.HostId)))
+            await Deny(user, "group.update");
     }
 }

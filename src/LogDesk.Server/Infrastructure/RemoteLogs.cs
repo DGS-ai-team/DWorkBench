@@ -13,6 +13,14 @@ public record RemoteFile(string Name, string Path, long Size, long ModifiedAt);
 
 public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogReader
 {
+    private static readonly string Follower = LoadFollower();
+    private static string LoadFollower()
+    {
+        using var script = typeof(RemoteLogs).Assembly.GetManifestResourceStream("LogDesk.Server.Infrastructure.follow_log.py")
+            ?? throw new InvalidOperationException("Missing remote log reader.");
+        using var text = new StreamReader(script);
+        return text.ReadToEnd().Replace("\r\n", "\n");
+    }
     private readonly SemaphoreSlim previewSlots = new(4);
     public async Task<object> Preview(Source source, CancellationToken ct)
     {
@@ -93,6 +101,7 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
     }
     public async IAsyncEnumerable<string> Watch(Source source, FileEntry file, [EnumeratorCancellation] CancellationToken ct)
     {
+        var encoding = Rules.StreamEncoding(source.Encoding);
         using (var sftp = await Sftp(source.Host, ct))
         {
             var attributes = await sftp.GetAttributesAsync(file.Path, ct);
@@ -101,11 +110,11 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
         using var client = new SshClient(Info(source.Host));
         Configure(client, source.Host);
         await client.ConnectAsync(ct);
-        using var command = client.CreateCommand("tail -n 200 -F -- " + Rules.Quote(file.Path), Rules.Encoding(source.Encoding));
+        using var command = client.CreateCommand("python3 -u -c " + Rules.Quote(Follower) + " " + Rules.Quote(file.Path));
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var execution = command.ExecuteAsync(lifetime.Token);
         using var disconnect = lifetime.Token.Register(() => { try { client.Disconnect(); } catch { /* Cancellation closes the socket. */ } });
-        using var reader = new StreamReader(command.OutputStream, Rules.Encoding(source.Encoding), false, 8192, true);
+        using var reader = new StreamReader(command.OutputStream, encoding, false, 8192, true);
         var channel = Channel.CreateBounded<string>(new BoundedChannelOptions(64) { SingleWriter = true, SingleReader = true });
         var producer = Task.Run(async () =>
         {
@@ -116,7 +125,7 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
                 while ((count = await reader.ReadAsync(chars.AsMemory(), lifetime.Token)) > 0)
                     if (!channel.Writer.TryWrite(new string(chars, 0, count))) throw new ApiError(429, "日志输出超过当前客户端接收能力，已停止此流以保护内存。请缩小查看范围后重试。");
                 await execution;
-                if (command.ExitStatus != 0) throw new ApiError(502, "远端 tail 命令退出，请确认文件存在、读取权限及 GNU tail 可用性。");
+                if (command.ExitStatus != 0) throw new ApiError(502, "远端日志读取已停止，请确认 Python 3 可用、文件可读且路径各级均不是符号链接。");
                 channel.Writer.TryComplete();
             }
             catch (Exception error) { channel.Writer.TryComplete(error); }

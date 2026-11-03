@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { disconnectLogs } from "./LogPane";
 import {
   Plus,
   Pencil,
@@ -601,11 +602,9 @@ function Resources({
                     name="encoding"
                     defaultValue={(editing.item as Source)?.encoding ?? "utf-8"}
                   >
-                    {["utf-8", "gb18030", "gb2312", "utf-16", "iso-8859-1"].map(
-                      (x) => (
-                        <option key={x}>{x}</option>
-                      ),
-                    )}
+                    {["utf-8", "gb18030", "gb2312", "iso-8859-1"].map((x) => (
+                      <option key={x}>{x}</option>
+                    ))}
                   </select>
                 </Field>
               </div>
@@ -1185,7 +1184,8 @@ export function PasswordModal({
           currentPassword: text(data, "currentPassword"),
           newPassword: text(data, "newPassword"),
         });
-        notify("密码已更新。");
+        await disconnectLogs();
+        notify("密码已更新，请重新连接需要查看的日志。");
       }}
     >
       <Field label="当前密码">
@@ -1250,6 +1250,8 @@ const actionLabel: Record<string, string> = {
   "password.changed": "修改密码",
 };
 function AuditPage() {
+  const generation = useRef(0);
+  const request = useRef<AbortController | null>(null);
   const [events, setEvents] = useState<Audit[]>([]),
     [q, setQ] = useState(""),
     [result, setResult] = useState(""),
@@ -1258,6 +1260,10 @@ function AuditPage() {
     [error, setError] = useState(""),
     [more, setMore] = useState(false);
   async function load(append = false) {
+    const token = ++generation.current;
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     setBusy(true);
     try {
       const params = new URLSearchParams({ q, result });
@@ -1265,19 +1271,37 @@ function AuditPage() {
         params.set("since", String(Date.now() - Number(period) * 86400000));
       if (append && events.length)
         params.set("before", String(events.at(-1)!.id));
-      const rows = await api<Audit[]>(`/audit?${params}`);
+      const rows = await api<Audit[]>(
+        `/audit?${params}`,
+        undefined,
+        undefined,
+        { signal: controller.signal },
+      );
+      if (generation.current !== token) return;
       setEvents((old) => (append ? old.concat(rows) : rows));
       setMore(rows.length === 100);
       setError("");
     } catch (e) {
-      setError((e as Error).message);
+      if (generation.current === token && !controller.signal.aborted)
+        setError((e as Error).message);
     } finally {
-      setBusy(false);
+      if (generation.current === token) setBusy(false);
     }
   }
   useEffect(() => {
+    // Invalidate immediately, including the debounce interval before load().
+    generation.current++;
+    request.current?.abort();
+    setEvents([]);
+    setMore(false);
+    setBusy(true);
+    setError("");
     const timer = setTimeout(() => void load(), 250);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      generation.current++;
+      request.current?.abort();
+    };
   }, [q, result, period]);
   return (
     <div className="management">

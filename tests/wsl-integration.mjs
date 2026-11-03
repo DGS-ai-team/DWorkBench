@@ -1,4 +1,4 @@
-// Real OpenSSH/SFTP + Linux tail verification on the developer's WSL distro.
+// Real OpenSSH/SFTP + Linux secure follower verification on the developer's WSL distro.
 // Run from the repository: node tests/wsl-integration.mjs
 // Creates an isolated account/sshd/log directory, then removes them in finally.
 import assert from "node:assert/strict";
@@ -171,14 +171,14 @@ async function mutate(code) {
       "\nPY",
   );
 }
-async function tailPids() {
+async function followerPids() {
   const listing = await wsl(`ps -u ${account} -o pid=,comm=,args= || true`);
   return listing
     .split("\n")
-    .filter((line) => /^\s*\d+\s+(tail|gnutail)\s/.test(line))
+    .filter((line) => /^\s*\d+\s+python3\s+python3 -u -c/.test(line))
     .join("\n");
 }
-async function exerciseTail(group, file, label) {
+async function exerciseFollower(group, file, label) {
   let output = "",
     streamError;
   const subscription = hub.stream("Watch", group.id, file.id).subscribe({
@@ -193,7 +193,7 @@ async function exerciseTail(group, file, label) {
       if (streamError) throw streamError;
       return output.includes("服务已启动");
     }, label + " initial UTF-8");
-    assert.ok(await tailPids(), "A real remote tail process must be running");
+    assert.ok(await followerPids(), "A real remote follower process must be running");
     const start = Date.now();
     await mutate(
       `with p.open('a', encoding='utf-8') as f: f.write(${JSON.stringify(label + " append 实时追加 ✓\n")})`,
@@ -235,19 +235,19 @@ async function exerciseTail(group, file, label) {
         .slice(beforeRecreate)
         .includes(label + " recreate 文件重建");
     }, label + " deletion/recreation");
-    pass(label + ": real tail initial/append/truncate/rotate/recreate", {
+    pass(label + ": real follower initial/append/truncate/rotate/recreate", {
       appendMs,
       rotationMs,
     });
   } finally {
     subscription.dispose();
     await until(
-      async () => !(await tailPids()),
-      label + " tail process cleanup",
+      async () => !(await followerPids()),
+      label + " follower process cleanup",
       10000,
     );
   }
-  pass(label + ": cancelling stream removes remote tail");
+  pass(label + ": cancelling stream removes remote follower");
 }
 
 try {
@@ -259,7 +259,7 @@ try {
   await mkdir(path.join(root, ".local"), { recursive: true });
   storage = await mkdtemp(path.join(root, ".local/wsl-integration-"));
   metadata = await wsl(
-    "cat /etc/os-release; /usr/sbin/sshd -V 2>&1; tail --version | head -n 1; /usr/bin/gnutail --version | head -n 1",
+    "cat /etc/os-release; /usr/sbin/sshd -V 2>&1; python3 --version",
   );
   console.log(metadata);
   // Reserve separate free ports in Windows and Linux; no changes to port 22 or system sshd configuration.
@@ -348,9 +348,9 @@ PY`);
     address: "127.0.0.1",
     port: sshPort,
   });
-  const defaultTail = await ssh("tail --version | head -n 1");
-  console.log("Remote default: " + defaultTail);
-  assert.match(defaultTail, /uutils|GNU/);
+  const pythonVersion = await ssh("python3 --version");
+  console.log("Remote reader runtime: " + pythonVersion);
+  assert.match(pythonVersion, /Python 3/);
   const pinned = (
     await wsl(`ssh-keygen -l -E sha256 -f ${remoteRoot}/host_key.pub`)
   ).split(/\s+/)[1];
@@ -505,20 +505,11 @@ PY`);
     "first output from initially empty file",
   );
   emptySubscription.dispose();
-  await until(async () => !(await tailPids()), "empty tail cleanup");
+  await until(async () => !(await followerPids()), "empty follower cleanup");
   pass(
     "Initially empty file reports connected and streams its first appended line",
   );
-  await exerciseTail(
-    group,
-    file,
-    defaultTail.includes("uutils") ? "uutils 0.8.0" : "default GNU tail",
-  );
-  await wsl(`ln -s /usr/bin/gnutail ${remoteRoot}/bin/tail`);
-  const gnuTail = await ssh("tail --version | head -n 1");
-  assert.match(gnuTail, /GNU coreutils/);
-  await mutate("p.write_text('INFO 服务已启动 ✓\\n', encoding='utf-8')");
-  await exerciseTail(group, file, gnuTail);
+  await exerciseFollower(group, file, pythonVersion + ' secure follower');
 
   // Read an existing system log as well; never write to or rotate system files.
   const existingLog = await ssh("if test -r /var/log/dpkg.log && test -s /var/log/dpkg.log; then printf /var/log/dpkg.log; elif test -r /var/log/dpkg.log.1 && test -s /var/log/dpkg.log.1; then printf /var/log/dpkg.log.1; fi");
@@ -588,7 +579,7 @@ PY`);
     } finally {
       systemSubscription.dispose();
     }
-    await until(async () => !(await tailPids()), "system log tail cleanup");
+    await until(async () => !(await followerPids()), "system log follower cleanup");
     pass(
       "Existing " + existingLog + ": listing, full download SHA-256 and last 200 lines match Linux",
       { bytes: bytes.length },
@@ -628,7 +619,7 @@ PY`);
       .getByText("INFO 浏览器收到 WSL 实时追加 ✓", { exact: true })
       .waitFor();
     assert.equal(
-      (await tailPids()).split("\n").filter(Boolean).length,
+      (await followerPids()).split("\n").filter(Boolean).length,
       2,
       await wsl(`ps -u ${account} -o pid=,comm=,args=`),
     );
@@ -639,7 +630,7 @@ PY`);
     await page.locator(".log-pane").first().getByRole("button", { name: /更多操作/ }).click();
     await page.getByRole("menuitem", { name: "停止接收", exact: true }).click();
     await until(
-      async () => (await tailPids()).split("\n").filter(Boolean).length === 1,
+      async () => (await followerPids()).split("\n").filter(Boolean).length === 1,
       "browser independent stop",
     );
     assert.equal(await page.locator(".log-pane").count(), 2);
@@ -648,7 +639,7 @@ PY`);
     await browser.close();
     browser = null;
     await until(
-      async () => !(await tailPids()),
+      async () => !(await followerPids()),
       "browser close process cleanup",
     );
     pass(
@@ -686,7 +677,7 @@ PY`);
           await until(() => ready, "load subscriber ready");
         }
       }
-      assert.equal((await tailPids()).split("\n").filter(Boolean).length, 1);
+      assert.equal((await followerPids()).split("\n").filter(Boolean).length, 1);
       const status = await api.request("/streams/status"); assert.equal(status.readers, 1); assert.equal(status.subscriptions, 32);
       const started = Date.now();
       await wsl("python3 - <<'PY'\nimport pathlib,time\np=pathlib.Path(" + JSON.stringify(remoteLog) + ")\nwith p.open('a',encoding='utf-8',buffering=1) as f:\n for batch in range(250):\n  lines=[]\n  for offset in range(20):\n   seq=batch*20+offset+1\n   lines.append('__wsl_seq=%d __wsl_ts=%d INFO 中文真实 Linux 压测'%(seq,int(time.time()*1000))+chr(10))\n  f.write(''.join(lines)); time.sleep(0.02)\nPY");
@@ -694,10 +685,10 @@ PY`);
       assert.deepEqual(failures, []);
       let seen = 0, p95 = 0;
       for (; p95 < histogram.length; p95++) { seen += histogram[p95]; if (seen >= 5000 * 32 * .95) break; }
-      pass("Real WSL GNU tail: 8 users, 32 subscriptions share 1 SSH reader; 5000 lines each without gaps", { totalDelivered: counts.reduce((a,b) => a+b, 0), p95Ms: p95, elapsedMs: Date.now() - started });
+      pass("Real WSL secure follower: 8 users, 32 subscriptions share 1 SSH reader; 5000 lines each without gaps", { totalDelivered: counts.reduce((a,b) => a+b, 0), p95Ms: p95, elapsedMs: Date.now() - started });
     } finally {
       for (const connection of connections) await connection.stop();
-      await until(async () => !(await tailPids()), "load reader cleanup");
+      await until(async () => !(await followerPids()), "load reader cleanup");
     }
   }
   await hub.stop();

@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 import { workspaceChecks, workspaceBrowserChecks } from './workspace.mjs';
+import { remoteCommand } from './remote-command.mjs';
+import { reviewApiChecks, reviewBrowserChecks } from './review-regression.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const require=createRequire(path.join(root,'src/LogDesk.Client/package.json'));
 const {Server,utils}=require('ssh2');
@@ -22,13 +24,13 @@ async function fixture(label){
   for(let i=0;i<230;i++)files.set(`${dir}/archive-${String(i).padStart(3,'0')}.log`,Buffer.from(`2026-11-02 09:40:00.001 INFO [${label}] archived log ${i}\n`));
   const logPath=dir+"/api space's.log";files.set(logPath,Buffer.from(`2026-11-02 10:15:00.002 INFO  [${label}] 服务已启动\n2026-11-02 10:15:00.014 WARN  [${label}] queue latency 125ms\n`));
   files.set(dir+'/worker.log',Buffer.from(`2026-11-02 10:15:01.002 INFO  [${label}] worker ready\n`));
-  let authenticationCount=0,active=0;const sockets=new Set();
+  let authenticationCount=0,active=0,holdReads=false;const pendingReads=[];const sockets=new Set();
   const server=new Server({hostKeys:[key]},client=>{
     sockets.add(client);client.on('error',e=>{if(process.env.DEBUG_FIXTURE)console.log('SSH fixture:',e.message)});client.on('close',()=>sockets.delete(client));
     client.on('authentication',ctx=>{if(ctx.method==='password'){authenticationCount++;if(ctx.username==='reader'&&ctx.password==='FixtureSecret123')return ctx.accept()}ctx.reject(['password'])});
     client.on('ready',()=>client.on('session',accept=>{const session=accept();
       session.on('exec',(accept,reject,info)=>{
-        const filename=[...files.keys()].find(p=>info.command===`tail -n 200 -F -- ${quote(p)}`);if(!filename)return reject();
+        const filename=[...files.keys()].find(p=>info.command===remoteCommand(p));if(!filename)return reject();
         const stream=accept();active++;stream.write(files.get(filename));
         const timer=setInterval(()=>stream.write(`2026-11-02 10:15:02.125 INFO  [${label}] request completed duration=12ms ✓\n`),180);
         let closed=false;const close=()=>{if(closed)return;closed=true;clearInterval(timer);active--;client.removeListener('close',close)};stream.on('close',close);stream.on('error',close);client.on('close',close);
@@ -44,14 +46,14 @@ async function fixture(label){
         s.on('READDIR',(id,h)=>{const entry=handles.get(h.toString('hex'));if(!entry||entry.done)return s.status(id,1);entry.done=true;
           s.name(id,[...files.keys(),dir+'/link.log'].map(p=>({filename:p.slice(dir.length+1),longname:p,attrs:attr(p)})))});
         s.on('OPEN',(id,p)=>files.has(p)?s.handle(id,handle({path:p})):s.status(id,2));
-        s.on('READ',(id,h,offset,len)=>{const file=files.get(handles.get(h.toString('hex'))?.path);if(!file)return s.status(id,2);if(offset>=file.length)return s.status(id,1);s.data(id,file.subarray(offset,offset+len))});
+        s.on('READ',(id,h,offset,len)=>{const read=()=>{const file=files.get(handles.get(h.toString('hex'))?.path);if(!file)return s.status(id,2);if(offset>=file.length)return s.status(id,1);s.data(id,file.subarray(offset,offset+len))};if(holdReads)pendingReads.push(read);else read()});
         s.on('CLOSE',(id,h)=>{handles.delete(h.toString('hex'));s.status(id,0)});
         s.on('EXTENDED',id=>s.status(id,8));
       });
     }));
   });
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
-  return {port:server.address().port,files,logPath,get authenticationCount(){return authenticationCount},get active(){return active},disconnect:()=>{for(const client of sockets)client.end()},close:async()=>{for(const client of sockets)client.end();await new Promise(r=>server.close(r))}};
+  return {port:server.address().port,files,logPath,get authenticationCount(){return authenticationCount},get active(){return active},get pendingReads(){return pendingReads.length},holdDownloads:()=>{holdReads=true},releaseDownloads:()=>{holdReads=false;pendingReads.splice(0).forEach(read=>read())},disconnect:()=>{for(const client of sockets)client.end()},close:async()=>{for(const client of sockets)client.end();await new Promise(r=>server.close(r))}};
 }
 
 class Client{
@@ -121,6 +123,7 @@ try{
   await v.request('/hosts',{name:'no',address:'127.0.0.1',port:22,username:'root',password:'x'},'POST',403);
   await v.request('/audit',undefined,'GET',403);
   await workspaceChecks({admin,viewer:v,group,files:[fa,fb],fixtures:[a,b]});
+  await reviewApiChecks({admin,Client,group,fa,sa,sb,ha,fixture:a,until});
   const hub=new HubConnectionBuilder().withUrl(base+'/hubs/logs',{headers:{Cookie:admin.cookie()}}).configureLogging(LogLevel.None).build();await hub.start();
   let content='';const subscriptions=[];
   for(let i=0;i<4;i++)subscriptions.push(hub.stream('Watch',group.id,fa.id).subscribe({next:value=>content+=value,error:error=>{throw error}}));
@@ -193,6 +196,7 @@ try{
     await p.locator('.log-pane').first().locator('.log-line').first().waitFor();
     assert.equal(await p.locator('.log-pane').first().locator('.match-count').innerText(),stoppedCount,'management navigation preserves the stopped pane buffer');
     await workspaceBrowserChecks({page:p,admin,fixtures:[a,b],until});
+    await reviewBrowserChecks({page:p,admin,fixtures:[a,b],until});
     await p.screenshot({path:path.join(root,'.local/mvp-workspace-restored.png'),fullPage:true});
     assert.deepEqual(errors,[]);await context.close();await browser.close();browser=null;
     console.log('PASS browser: login, inventory selection, dual live panes, overlay geometry, independent stop, focus mode, member creation; no page errors');

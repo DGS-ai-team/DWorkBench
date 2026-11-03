@@ -190,9 +190,8 @@ public static class Endpoints
             var user = Current(ctx); var group = await db.Groups.FindAsync(id) ?? throw new ApiError(404, "日志组不存在。");
             if (user.Role != "Admin")
             {
-                var authorized = await access.Sources(user, id, "manage");
                 var existing = await db.GroupSources.Where(x => x.GroupId == id).Select(x => x.SourceId).ToArrayAsync();
-                if (existing.Concat(input.SourceIds).Except(authorized.Select(x => x.Id)).Any()) await access.Deny(user, "group.update");
+                await access.ManageGroupSources(user, id, existing.Concat(input.SourceIds).Distinct().ToArray());
             }
             await SetGroup(group, input, db); await db.SaveChangesAsync(); await audit.Write(user, "group.updated", group.Name); return Results.NoContent();
         });
@@ -265,7 +264,7 @@ public static class Endpoints
     {
         if (!await db.Hosts.AnyAsync(x => x.Id == input.HostId)) throw new ApiError(400, "请选择有效主机。");
         source.HostId = input.HostId; source.Name = Rules.Text(input.Name); source.Directory = Rules.Directory(input.Directory);
-        source.Pattern = Rules.Pattern(input.Pattern); source.Encoding = Rules.Encoding(input.Encoding).WebName;
+        source.Pattern = Rules.Pattern(input.Pattern); source.Encoding = Rules.StreamEncoding(input.Encoding).WebName;
     }
     private static async Task SetGroup(LogGroup group, GroupInput input, AppDb db)
     {
@@ -327,6 +326,11 @@ public static class Endpoints
     {
         var user = Current(ctx); var (file, source) = await access.File(user, id, fileId, "download");
         using var lease = await quota.Acquire(user.Id, ctx.RequestAborted);
+        // A quota wait can outlive the request's original authorization.
+        var stamp = user.SecurityStamp;
+        user = await access.User(user.Id);
+        if (user.SecurityStamp != stamp) throw new ApiError(401, "登录已失效，请重新登录。");
+        (file, source) = await access.File(user, id, fileId, "download");
         await audit.Write(user, "download.started", $"{source.Host.Name}:{file.Path}");
         try
         {

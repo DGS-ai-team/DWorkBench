@@ -41,7 +41,9 @@ type Draft = {
   ownerId: string;
   revision: string | null;
   document: WorkspaceDocument;
+  updatedAt?: number;
 };
+type DraftEntry = { key: string; raw: string; draft: Draft };
 export const emptyWorkspace: WorkspaceDocument = {
   version: 1,
   groupId: null,
@@ -142,6 +144,45 @@ function readDraft(key: string, owner: string): Draft | null {
   }
 }
 
+function newestDraft(
+  owner: string,
+  saved: WorkspaceDocument,
+): DraftEntry | null {
+  try {
+    const keys = Object.keys(localStorage).filter(
+      (k) =>
+        k.startsWith(`logdesk:workspace-draft:v2:${owner}:`) ||
+        k === `logdesk:workspace-draft:v1:${owner}`,
+    );
+    const entries = keys.flatMap((key) => {
+      const draft = readDraft(key, owner),
+        raw = localStorage.getItem(key);
+      if (!draft || !raw) return [];
+      const entry = { key, raw, draft };
+      if (fingerprint(draft.document) === fingerprint(saved)) {
+        removeDraft(entry);
+        return [];
+      }
+      return [entry];
+    });
+    entries.sort((a, b) => (b.draft.updatedAt ?? 0) - (a.draft.updatedAt ?? 0));
+    return entries[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+function removeDraft(entry: DraftEntry | null) {
+  if (!entry) return;
+  try {
+    // V2 entries are immutable and uniquely named. Other tabs never replace
+    // this key; the equality guard also protects legacy V1 drafts.
+    if (localStorage.getItem(entry.key) === entry.raw)
+      localStorage.removeItem(entry.key);
+  } catch {
+    /* Storage may be unavailable. */
+  }
+}
+
 // Persist only the explicit configuration DTO. Rows, activity excerpts, credentials,
 // live connection state and pending network frames never enter this hook.
 export function useWorkspacePersistence(
@@ -164,17 +205,36 @@ export function useWorkspacePersistence(
   const blocked = useRef(false),
     hydrated = useRef(false);
   const flight = useRef<Promise<boolean> | null>(null);
-  const key = (id: string) => `logdesk:workspace-draft:v1:${id}`;
+  const ownDraft = useRef<DraftEntry | null>(null);
+  const recoveredDraft = useRef<DraftEntry | null>(null);
   function journal(id: string) {
+    const serialized = fingerprint(current.current);
+    if (serialized === lastSaved.current) return;
+    const previous = ownDraft.current;
     try {
-      localStorage.setItem(
-        key(id),
-        JSON.stringify({
-          ownerId: id,
-          revision: revision.current,
-          document: current.current,
-        } satisfies Draft),
-      );
+      if (
+        previous?.draft.ownerId === id &&
+        previous.draft.revision === revision.current &&
+        fingerprint(previous.draft.document) === serialized &&
+        localStorage.getItem(previous.key) === previous.raw
+      )
+        return;
+      const draft: Draft = {
+        ownerId: id,
+        revision: revision.current,
+        document: current.current,
+        updatedAt: Date.now(),
+      };
+      const entry = {
+        key: `logdesk:workspace-draft:v2:${id}:${crypto.randomUUID()}`,
+        raw: JSON.stringify(draft),
+        draft,
+      };
+      localStorage.setItem(entry.key, entry.raw);
+      ownDraft.current = entry;
+      removeDraft(previous);
+      removeDraft(recoveredDraft.current);
+      recoveredDraft.current = null;
     } catch {
       /* Server persistence still works when local storage is unavailable. */
     }
@@ -197,7 +257,8 @@ export function useWorkspacePersistence(
         return;
       }
       const serverDocument = saved.document ?? emptyWorkspace;
-      const draft = discardDraft ? null : readDraft(key(id), id);
+      const entry = discardDraft ? null : newestDraft(id, serverDocument);
+      const draft = entry?.draft;
       let selected = draft?.document ?? serverDocument;
       let differs = fingerprint(selected) !== fingerprint(serverDocument);
       let collision = !!draft && differs && draft.revision !== saved.revision;
@@ -221,6 +282,12 @@ export function useWorkspacePersistence(
         }
       }
       if (epoch.current !== token) return;
+      if (discardDraft) {
+        removeDraft(ownDraft.current);
+        removeDraft(recoveredDraft.current);
+        ownDraft.current = null;
+      }
+      recoveredDraft.current = entry;
       // Keep the draft's stale base while a conflict is unresolved. Otherwise a
       // refresh would make it look current and silently bypass the user's choice.
       revision.current = collision ? draft!.revision : saved.revision;
@@ -237,9 +304,8 @@ export function useWorkspacePersistence(
           : "",
       );
       if (discardDraft || !differs) {
-        try {
-          localStorage.removeItem(key(id));
-        } catch {}
+        removeDraft(recoveredDraft.current);
+        recoveredDraft.current = null;
       }
     } catch (e) {
       if (epoch.current === token)
@@ -272,12 +338,12 @@ export function useWorkspacePersistence(
         revision.current = result.revision;
         lastSaved.current = serialized;
         setError("");
-        const draft = readDraft(key(id), id);
+        removeDraft(recoveredDraft.current);
+        recoveredDraft.current = null;
         if (fingerprint(current.current) !== serialized) journal(id);
-        else if (draft && fingerprint(draft.document) === serialized) {
-          try {
-            localStorage.removeItem(key(id));
-          } catch {}
+        else {
+          removeDraft(ownDraft.current);
+          ownDraft.current = null;
         }
         return true;
       } catch (e) {
@@ -314,6 +380,8 @@ export function useWorkspacePersistence(
     hydrated.current = false;
     flight.current = null;
     blocked.current = false;
+    ownDraft.current = null;
+    recoveredDraft.current = null;
     setLoadedOwner(null);
     setError("");
     setConflict(false);
@@ -325,20 +393,23 @@ export function useWorkspacePersistence(
   }, [ownerId]);
   const serialized = fingerprint(document);
   useEffect(() => {
-    if (
-      !ownerId ||
-      loadedOwner !== ownerId ||
-      !hydrated.current ||
-      serialized === lastSaved.current
-    )
+    if (!ownerId || loadedOwner !== ownerId || !hydrated.current) return;
+    if (serialized === lastSaved.current) {
+      removeDraft(ownDraft.current);
+      ownDraft.current = null;
       return;
+    }
     journal(ownerId);
     const timer = setTimeout(() => void latestFlush.current(), 500);
     return () => clearTimeout(timer);
   }, [serialized, ownerId, loadedOwner]);
   useEffect(() => {
     const leave = () => {
-      if (owner.current && hydrated.current) {
+      if (
+        owner.current &&
+        hydrated.current &&
+        fingerprint(current.current) !== lastSaved.current
+      ) {
         journal(owner.current);
         void latestFlush.current(true);
       }

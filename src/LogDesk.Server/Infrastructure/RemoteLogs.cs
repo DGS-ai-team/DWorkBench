@@ -117,7 +117,9 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
         var encoding = Rules.StreamEncoding(source.Encoding);
         using var client = await Sftp(source.Host, ct);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        using var disconnect = lifetime.Token.Register(() => { try { client.Disconnect(); } catch { /* Cancellation closes the socket. */ } });
+        // Let the producer cancel reads and close its handles before disconnecting.
+        // Disconnecting from the cancellation callback races SFTP CLOSE replies;
+        // an outstanding synchronous metadata request remains bounded by OperationTimeout.
         var channel = Channel.CreateBounded<string>(new BoundedChannelOptions(64) { SingleWriter = true, SingleReader = true });
         var producer = Task.Run(async () =>
         {

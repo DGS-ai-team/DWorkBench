@@ -1,4 +1,4 @@
-# LogDesk 技术方案
+# DWorkBench 技术方案
 
 - 文档版本：0.6
 - 日期：2026-11-03
@@ -6,7 +6,7 @@
 
 ## 1. 方案概要
 
-团队共享配置、资源权限和操作审计需要一个中心化服务。MVP 采用 B/S：Windows 用户通过浏览器访问 LogDesk，服务端统一保存团队数据并从管理网络连接 Linux 主机。首版不接 SSO，不部署 Rundeck 或 Ansible；未来身份认证通过 OIDC 扩展，批量运维通过 Ansible 执行器扩展。
+团队共享配置、资源权限和操作审计需要一个中心化服务。MVP 采用 B/S：Windows 用户通过浏览器访问 DWorkBench，服务端统一保存团队数据并从管理网络连接 Linux 主机。首版不接 SSO，不部署 Rundeck 或 Ansible；未来身份认证通过 OIDC 扩展，批量运维通过 Ansible 执行器扩展。
 
 | 层 | 建议 | 用途 |
 |---|---|---|
@@ -21,19 +21,19 @@
 
 首版保持单一部署单元：Web/API、后台执行器和 SignalR 托管在同一应用实例，PostgreSQL 提供持久化。SSH 连接和数据访问放在可替换接口后；目前不需要 Kafka、Redis、Rundeck、AWX 或独立 SSH Agent。
 
-实现位于 src/LogDesk.Server 与 src/LogDesk.Client，服务端按 Domain/Application/Infrastructure 目录组织。为本地开发额外支持 SQLite，Production 环境拒绝该配置。完整启动、发布、初次初始化和 Windows 服务安装流程见 [部署说明](DEPLOYMENT.md)。Linux CI workflow 已定义，尚未从本机执行 Linux 环境验收。
+实现位于 src/DWorkBench.Server 与 src/DWorkBench.Client，服务端按 Domain/Application/Infrastructure 目录组织。为本地开发额外支持 SQLite，Production 环境拒绝该配置。完整启动、发布、初次初始化和 Windows 服务安装流程见 [部署说明](DEPLOYMENT.md)。Linux CI workflow 已定义，尚未从本机执行 Linux 环境验收。
 
 ## 2. 总体结构
 
-团队浏览器通过 HTTPS/SignalR 连接 LogDesk Web/API。Web/API 调用本地身份与资源授权、PostgreSQL 和后台扫描/下载/SSH 调度。后台任务经 SSH.NET 连接多台 Linux 主机的 SFTP，增量跟随与解码运行在 Web 服务内。后续可以把 SSO 和 Ansible 执行器接到对应接口。
+团队浏览器通过 HTTPS/SignalR 连接 DWorkBench Web/API。Web/API 调用本地身份与资源授权、PostgreSQL 和后台扫描/下载/SSH 调度。后台任务经 SSH.NET 连接多台 Linux 主机的 SFTP，增量跟随与解码运行在 Web 服务内。后续可以把 SSO 和 Ansible 执行器接到对应接口。
 
-MVP 部署在已确认能访问全部目标主机的 Windows VM。浏览器经 HTTPS 访问同一 Web 服务，SSH.NET 在服务进程中发起出站 SFTP；不在远端执行应用命令或上传程序，不要求 Python、tail、Shell 执行能力。浏览器不接收 SSH 凭据。若以后主机分属互相隔离的网络区，可在各区增加执行节点，不需要在每台 Linux 主机安装 LogDesk Agent。
+MVP 部署在已确认能访问全部目标主机的 Windows VM。浏览器经 HTTPS 访问同一 Web 服务，SSH.NET 在服务进程中发起出站 SFTP；不在远端执行应用命令或上传程序，不要求 Python、tail、Shell 执行能力。浏览器不接收 SSH 凭据。若以后主机分属互相隔离的网络区，可在各区增加执行节点，不需要在每台 Linux 主机安装 DWorkBench Agent。
 
 ```mermaid
 flowchart LR
     B[团队浏览器] -->|HTTPS / SignalR| APP
     subgraph VM[管理网络内 Windows VM]
-        APP[LogDesk Windows 服务<br/>Kestrel + API + Web 静态文件]
+        APP[DWorkBench Windows 服务<br/>Kestrel + API + Web 静态文件]
         APP --> DB[(PostgreSQL<br/>仅本机连接)]
         APP --> SSH[后台扫描与 SSH.NET 连接器]
     end
@@ -42,13 +42,13 @@ flowchart LR
 
 ### 建议的项目边界
 
-- **LogDesk.Web**：ASP.NET Core API、SignalR Hub、认证与授权中间件；承载静态 Web 前端。
-- **LogDesk.Application**：日志扫描、开始/停止流、下载、用户/权限管理等用例；定义接口和审计要求。
-- **LogDesk.Domain**：用户授权范围、服务器连接、日志源、日志组、远程文件及审计事件等业务规则。
-- **LogDesk.Infrastructure.Ssh**：SSH.NET 适配器、SFTP 清单、描述符读取与日志跟随、主机指纹校验和并发调度。
-- **LogDesk.Infrastructure.Persistence**：EF Core/Npgsql、PostgreSQL schema、应用配置和审计存储。
-- **LogDesk.Worker**：后台执行接口与任务协调；MVP 可作为 Web 应用中的 Hosted Service，不单独部署。
-- **LogDesk.Client**：React + TypeScript 的浏览器 UI；通过 HTTPS API 和 SignalR 访问服务端。
+- **DWorkBench.Web**：ASP.NET Core API、SignalR Hub、认证与授权中间件；承载静态 Web 前端。
+- **DWorkBench.Application**：日志扫描、开始/停止流、下载、用户/权限管理等用例；定义接口和审计要求。
+- **DWorkBench.Domain**：用户授权范围、服务器连接、日志源、日志组、远程文件及审计事件等业务规则。
+- **DWorkBench.Infrastructure.Ssh**：SSH.NET 适配器、SFTP 清单、描述符读取与日志跟随、主机指纹校验和并发调度。
+- **DWorkBench.Infrastructure.Persistence**：EF Core/Npgsql、PostgreSQL schema、应用配置和审计存储。
+- **DWorkBench.Worker**：后台执行接口与任务协调；MVP 可作为 Web 应用中的 Hosted Service，不单独部署。
+- **DWorkBench.Client**：React + TypeScript 的浏览器 UI；通过 HTTPS API 和 SignalR 访问服务端。
 
 先按模块分层，不必把每个模块拆成独立部署服务。未来增加 SSO、Ansible 或多网络区执行节点时，依赖方向保持为 Web/API → Application 接口 → 具体 Infrastructure 适配器。
 
@@ -60,7 +60,7 @@ flowchart LR
 |---|---|---|
 | .NET 目标 | Web、Application、Domain 和通用 Infrastructure 使用 net10.0；Windows 专用 API 留在宿主配置/适配器中 | 按目标发行版、CPU 与 libc 发布对应运行包并验证 |
 | 服务生命周期 | 业务后台任务使用通用 Hosted Service；Windows 服务管理器接入集中在宿主启动处，按平台启用 | systemd 服务单元或容器托管、服务身份与自动恢复 |
-| 本机路径 | DataRoot、KeyRingPath、TempPath、LogPath 来自部署配置；D:\LogDesk 仅为 Windows 默认值；本机路径用标准 Path API | 改为 Linux 绝对路径、挂载目录和权限，验证大小写差异 |
+| 本机路径 | DataRoot、KeyRingPath、TempPath、LogPath 来自部署配置；D:\DWorkBench 仅为 Windows 默认值；本机路径用标准 Path API | 改为 Linux 绝对路径、挂载目录和权限，验证大小写差异 |
 | 远端 Linux 路径 | 始终按 POSIX 路径与大小写语义处理；不使用 Windows 的 Path.Combine/GetFullPath 拼装或规范化远端路径 | 保持相同远端行为，无需按服务端系统改写 |
 | 证书/凭据 | Data Protection、X.509 保护方案独立于 Windows 用户身份；证书加载源可配置，Windows 默认从证书存储读取 | 通过受限文件/Secret 挂载加载同一保护证书及私钥，完成旧凭据解密验证 |
 | 日志/配置 | 业务使用 ILogger 与标准配置系统；Windows 事件日志仅作为宿主可选输出；不依赖注册表保存业务数据 | 接入标准输出/journald 或部署环境日志收集 |
@@ -123,7 +123,7 @@ Data Protection 明确设置稳定的 ApplicationName 和 purpose。迁移时携
 ### SSH 凭据
 
 - 首版支持每个服务器连接配置一个 SSH 账号密码；凭据只在服务端加密保存，浏览器只传输一次性 TLS 请求，不持久化凭据。
-- 使用 ASP.NET Core Data Protection 加密 SSH 凭据，数据库仅保存密文。key ring 存储路径通过 KeyRingPath 配置，Windows 部署默认 D:\LogDesk\secrets\keys；以独立的 X.509 证书保护。证书加载源通过配置选择，Windows 默认从本地计算机证书存储读取，未来 Linux 可从受限文件读取；应用服务身份获授读取私钥所需的权限。密钥目录限制服务身份与必要管理员访问，数据库和解密材料分开备份并受保护。
+- 使用 ASP.NET Core Data Protection 加密 SSH 凭据，数据库仅保存密文。key ring 存储路径通过 KeyRingPath 配置，Windows 部署默认 D:\DWorkBench\secrets\keys；以独立的 X.509 证书保护。证书加载源通过配置选择，Windows 默认从本地计算机证书存储读取，未来 Linux 可从受限文件读取；应用服务身份获授读取私钥所需的权限。密钥目录限制服务身份与必要管理员访问，数据库和解密材料分开备份并受保护。
 - 备份/恢复必须同时验证数据库与密钥环可恢复；密钥轮换与解密旧凭据要有演练。将来有现成密钥管理服务时，再用 CredentialStore 适配器接入。
 - 凭据读取仅限服务端 SSH 连接组件；除非重新输入，不在 UI 回显已保存密码。应用诊断日志不输出认证载荷。
 - Linux 侧建议创建只读、限目录账号；管理员确认 SSH 主机 SHA-256 指纹后固定保存，后续指纹变化时拒绝连接并要求复核。
@@ -189,7 +189,7 @@ SFTP 对大目录枚举通常仍需读取全部目录项；分页和虚拟化解
 
 MVP 不部署或调用 Ansible。应用层为未来定义独立的 IJobExecutor/IOperationExecutor 接口；日志扫描、tail 和下载走 SSH.NET，批量变更、配置检查、服务控制等声明式操作可增加 Ansible Core 适配器。
 
-后续优先增加一台具备目标主机网络可达性的 Linux 执行节点，Windows 控制面通过经过认证的执行接口提交任务并接收状态与结果。任务带应用操作者和审计 ID。只允许经审阅/版本控制的 Playbook 或应用内固定任务模板；不把用户提交的文本直接拼成 Shell 命令。MVP 的用户、主机和授权数据作为候选 inventory 输入，但是否由 LogDesk 管理 inventory、还是映射现有 Ansible inventory，需要集成阶段再决定。
+后续优先增加一台具备目标主机网络可达性的 Linux 执行节点，Windows 控制面通过经过认证的执行接口提交任务并接收状态与结果。任务带应用操作者和审计 ID。只允许经审阅/版本控制的 Playbook 或应用内固定任务模板；不把用户提交的文本直接拼成 Shell 命令。MVP 的用户、主机和授权数据作为候选 inventory 输入，但是否由 DWorkBench 管理 inventory、还是映射现有 Ansible inventory，需要集成阶段再决定。
 
 引入前验证 Ansible control node、SSH 凭据传递、任务取消/超时、分主机结果回传、敏感输出遮盖和审计映射。Ansible 不支持原生 Windows 作为控制节点；虽然 WSL 可运行 Ansible，官方明确说明 WSL 不受支持且不应用于生产系统。因此团队正式使用的 Ansible 执行端优先采用独立 Linux 节点，WSL 仅作为可选的开发/验证环境，不能成为生产集成的默认路径。[Ansible：Windows 控制节点与 WSL 限制](https://docs.ansible.com/projects/ansible/latest/os_guide/intro_windows.html#using-windows-as-the-control-node)
 
@@ -214,12 +214,12 @@ MVP 不部署或调用 Ansible。应用层为未来定义独立的 IJobExecutor/
 
 | 组件 | 首版部署方式 |
 |---|---|
-| LogDesk 应用 | 一个 Windows 服务，托管 Kestrel、API、SignalR、前端静态文件及后台任务 |
+| DWorkBench 应用 | 一个 Windows 服务，托管 Kestrel、API、SignalR、前端静态文件及后台任务 |
 | PostgreSQL | 同机安装，作为独立 Windows 服务运行；仅监听本机并使用独立应用数据库账号 |
 | HTTPS | Kestrel 配置团队信任的服务器证书和内部域名；默认规划 TCP 443，若被占用则使用约定端口 |
 | 前端发布 | React 构建产物随应用发布；VM 无需运行 Node 开发服务器 |
 | 应用包 | 首选自包含 win-x64 发布包；最终按 VM 的 Windows 版本、架构和 .NET 支持范围确认 |
-| 数据目录 | 应用放 D:\LogDesk\app；PostgreSQL 数据放 D:\LogDesk\data\postgres；密钥、临时下载与诊断文件分别放在 secrets、temp、logs 子目录并设置独立访问权限 |
+| 数据目录 | 应用放 D:\DWorkBench\app；PostgreSQL 数据独立放 D:\PostgreSQL\17\data；密钥、临时下载与诊断文件分别放在应用 DataRoot 下的 secrets、temp、logs 子目录并设置独立访问权限 |
 
 - 采用 Microsoft.Extensions.Hosting.WindowsServices 接入 Windows 服务管理器，设置自动启动与失败恢复；RDP 注销后继续运行。后台任务和 Web/API 共用应用生命周期，停止服务时取消 SSH 会话并释放资源。
 - 使用专用低权限服务身份运行应用，授予“作为服务登录”和必要目录/证书权限。所有路径显式配置，不依赖服务启动时的当前工作目录。
@@ -246,7 +246,7 @@ MVP 不部署或调用 Ansible。应用层为未来定义独立的 IJobExecutor/
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
-| 本地账号暂时代替 SSO | 密码与离职账号生命周期由 LogDesk 承担 | 限内网/VPN；禁公开注册；管理员启停账号；锁定失败登录；后续 OIDC 映射内部用户 ID |
+| 本地账号暂时代替 SSO | 密码与离职账号生命周期由 DWorkBench 承担 | 限内网/VPN；禁公开注册；管理员启停账号；锁定失败登录；后续 OIDC 映射内部用户 ID |
 | 共享 SSH 凭据被滥用 | 主机侧看到服务账号，难以从 sshd 区分应用用户 | 应用层每个动作记录内部操作者；只读专用 SSH 账号；后续需要主机级归因时改用个人账户/短期 SSH 证书 |
 | 数据库泄露暴露密码 | 可能扩展为多台 Linux 失陷 | DB 只存 Data Protection 密文；key ring 与保护密钥独立保管；限制管理员权限并演练恢复 |
 | 权限只在 UI 隐藏 | API/SignalR 可被直接请求绕过 | 所有 API、下载、SignalR 订阅均做服务端资源授权；未授权不返回资源元数据 |

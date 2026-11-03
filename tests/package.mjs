@@ -5,15 +5,15 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { freePort, until } from './load-support.mjs';
 
-const root = process.cwd(), folder = path.join(root, 'artifacts/windows/LogDesk');
-for (const file of ['LogDesk.Server.exe', 'Install-Windows.ps1', 'DEPLOYMENT.md', 'LICENSE', 'licenses/npm/re2js/LICENSE'])
+const root = process.cwd(), folder = path.join(root, 'artifacts/windows/DWorkBench');
+for (const file of ['DWorkBench.Server.exe', 'Install-Windows.ps1', 'DEPLOYMENT.md', 'LICENSE', 'licenses/npm/re2js/LICENSE'])
   await access(path.join(folder, file));
 const hash = createHash('sha256').update(await readFile(folder + '.zip')).digest('hex');
-assert.equal((await readFile(folder + '.zip.sha256', 'utf8')).trim(), hash + '  LogDesk.zip');
+assert.equal((await readFile(folder + '.zip.sha256', 'utf8')).trim(), hash + '  DWorkBench.zip');
 await mkdir(path.join(root, '.local'), { recursive: true });
 const storage = await mkdtemp(path.join(root, '.local/package-'));
 const base = 'http://127.0.0.1:' + await freePort();
-const app = spawn(path.join(folder, 'LogDesk.Server.exe'), [], {
+const app = spawn(path.join(folder, 'DWorkBench.Server.exe'), [], {
   cwd: folder, windowsHide: true,
   env: { ...process.env, ASPNETCORE_ENVIRONMENT: 'Development', ASPNETCORE_URLS: base, Database__Provider: 'Sqlite', Storage__Root: storage, Bootstrap__Token: 'isolated-package-smoke-only' },
 });

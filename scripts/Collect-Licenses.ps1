@@ -4,14 +4,14 @@ $repo = Split-Path $PSScriptRoot -Parent
 $noticeRoot = Join-Path $Output 'licenses'
 New-Item -ItemType Directory -Force -Path $noticeRoot | Out-Null
 Copy-Item -Path (Join-Path $repo 'third-party/*') -Destination $noticeRoot -Recurse -Force
-$npmRoot = Join-Path $repo 'src/LogDesk.Client/node_modules'
+$npmRoot = Join-Path $repo 'src/DWorkBench.Client/node_modules'
 Get-ChildItem -LiteralPath $npmRoot -Recurse -File | Where-Object { $_.Name -match '^(LICENSE|LICENCE|NOTICE|COPYING)(\.|$|-)' } | ForEach-Object {
     $relative = [IO.Path]::GetRelativePath($npmRoot,$_.FullName)
     $destination = Join-Path $noticeRoot (Join-Path 'npm' $relative)
     New-Item -ItemType Directory -Force -Path (Split-Path $destination -Parent) | Out-Null
     Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
 }
-$assets = Get-Content (Join-Path $repo 'src/LogDesk.Server/obj/project.assets.json') -Raw | ConvertFrom-Json -AsHashtable
+$assets = Get-Content (Join-Path $repo 'src/DWorkBench.Server/obj/project.assets.json') -Raw | ConvertFrom-Json -AsHashtable
 foreach ($package in $assets.libraries.GetEnumerator() | Where-Object { $_.Value.type -eq 'package' }) {
     foreach ($packageRoot in $assets.packageFolders.Keys) {
         $folder = Join-Path $packageRoot $package.Value.path

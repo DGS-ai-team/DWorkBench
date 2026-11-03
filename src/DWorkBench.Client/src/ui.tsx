@@ -8,7 +8,7 @@ export function Brand({ small = false }: { small?: boolean }) {
         <Terminal size={small ? 18 : 21} />
       </span>
       <span>
-        LogDesk<span className="brand-dot">.</span>
+        DWorkBench<span className="brand-dot">.</span>
       </span>
     </div>
   );

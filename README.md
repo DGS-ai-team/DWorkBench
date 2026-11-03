@@ -1,8 +1,8 @@
-# DWorkBench / LogDesk
+# DWorkBench
 
 面向团队的 Linux 日志工作台 MVP。浏览器访问，服务端通过 SSH/SFTP 连接多台 Linux 主机；部署目标为管理网络内现有的 Windows Server 2022 VM。
 
-Linux 目标机只需已有的 **SSH/SFTP 服务和可读取日志的账号**。清单、下载、实时增量读取统一通过 SFTP，解码与跟随逻辑运行在 LogDesk 服务端；不要求 Python、tail、Shell 执行权限或安装远端组件，不上传脚本/程序。按可信内网主机设计：检查规范路径与普通文件、拒绝发现的符号链接；普通 SFTP 的路径检查不是对恶意并发替换的原子隔离。流式编码支持 UTF-8、GB18030、GB2312/GBK、ISO-8859-1、ASCII；UTF-16/UTF-32 原文件可下载查看。
+Linux 目标机只需已有的 **SSH/SFTP 服务和可读取日志的账号**。清单、下载、实时增量读取统一通过 SFTP，解码与跟随逻辑运行在 DWorkBench 服务端；不要求 Python、tail、Shell 执行权限或安装远端组件，不上传脚本/程序。按可信内网主机设计：检查规范路径与普通文件、拒绝发现的符号链接；普通 SFTP 的路径检查不是对恶意并发替换的原子隔离。流式编码支持 UTF-8、GB18030、GB2312/GBK、ISO-8859-1、ASCII；UTF-16/UTF-32 原文件可下载查看。
 
 ## 已实现
 
@@ -36,7 +36,7 @@ Linux 目标机只需已有的 **SSH/SFTP 服务和可读取日志的账号**。
 ./scripts/Publish-Windows.ps1
 ```
 
-生成 artifacts/windows/LogDesk.zip。解压后用包内 Install-Windows.ps1 配置 PostgreSQL、HTTPS 与凭据保护证书。应用和数据库原生运行在 Windows，MVP 不依赖 WSL；具体步骤见 [部署与使用说明](docs/DEPLOYMENT.md)。
+生成 artifacts/windows/DWorkBench.zip。解压后用包内 Install-Windows.ps1 配置 PostgreSQL、HTTPS 与凭据保护证书。应用和数据库原生运行在 Windows，MVP 不依赖 WSL；具体步骤见 [部署与使用说明](docs/DEPLOYMENT.md)。
 
 管理网络无法访问互联网时，按 [离线安装说明](docs/DEPLOYMENT.md#离线安装windows-server-2022) 提前准备发布包、SHA-256、PostgreSQL 完整安装包及证书。目标 VM 不需要安装 SDK、Node.js 或在线还原依赖；DEPLOYMENT.md 随发布包提供，可在内网直接阅读。
 
@@ -50,18 +50,18 @@ Linux 目标机只需已有的 **SSH/SFTP 服务和可读取日志的账号**。
 | 工作台回归 | 配置保存、账号隔离、并发版本冲突、撤权及失效引用；浏览器刷新/重新登录、手动恢复接收、本机冲突草稿 |
 | PostgreSQL 17 | 独立测试数据库上的完整接口回归，含工作台版本比较更新 |
 | 短时负载 | 8 / 32 订阅共享同一读取器，检查缺口、队列上限和退出释放；每档 5 秒，不用于承诺生产容量 |
-| Windows 发布包 | 自包含发布、SHA-256、程序启动、首页/JS/Worker 和许可证；通过后上传 `LogDesk-win-x64` Artifact，保留 14 天 |
+| Windows 发布包 | 自包含发布、SHA-256、程序启动、首页/JS/Worker 和许可证；通过后上传 `DWorkBench-win-x64` Artifact，保留 14 天 |
 
 失败日志、截图及负载报告作为诊断 Artifact 保留 7 天；数据库、保护密钥、Cookie 和本机开发配置不上传。过时的同一 PR 流水线自动取消，各任务有超时限制。流水线只构建和验证，目标 Windows Server 的部署仍按部署文档执行。
 
 ```powershell
-cd src/LogDesk.Client
+cd src/DWorkBench.Client
 npm ci
 npm run build
 npx playwright install chromium
 cd ../..
-dotnet build src/LogDesk.Server
-dotnet run --project tests/LogDesk.CoreChecks
+dotnet build src/DWorkBench.Server
+dotnet run --project tests/DWorkBench.CoreChecks
 node tests/log-processing.mjs
 node tests/log-activity.mjs
 node tests/integration.mjs
@@ -81,8 +81,8 @@ WSL 脚本使用独立数据库、临时 Linux 账号及回环 SSH 端口，并�
 
 ## 项目结构
 
-- src/LogDesk.Server：ASP.NET Core、Identity、SignalR、EF Core、SSH.NET；业务与基础设施按目录组织。
-- src/LogDesk.Client：React + TypeScript、虚拟列表、多窗格工作台。
+- src/DWorkBench.Server：ASP.NET Core、Identity、SignalR、EF Core、SSH.NET；业务与基础设施按目录组织。
+- src/DWorkBench.Client：React + TypeScript、虚拟列表、多窗格工作台。
 - tests：受控 SSH/SFTP、真实 WSL 与浏览器集成测试。
 - deploy / scripts：Windows 安装、开发启动、自包含发布。
 - [产品规格](docs/PRODUCT_SPEC.md)、[技术方案](docs/TECHNICAL_DESIGN.md)、[部署说明](docs/DEPLOYMENT.md)。

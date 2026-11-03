@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Net.Http.Headers;
 
-namespace LogDesk;
+namespace DWorkBench;
 
 public static class Endpoints
 {
@@ -22,7 +22,7 @@ public static class Endpoints
     }
     private static string Like(string value) => "%" + value.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
 
-    public static void MapLogDesk(this WebApplication app)
+    public static void MapDWorkBench(this WebApplication app)
     {
         app.MapGet("/api/health", () => Results.Ok(new { status = "ok", version = "0.1.0" }));
         app.MapGet("/api/session", async (HttpContext ctx, AppDb db, IAntiforgery antiforgery) => new

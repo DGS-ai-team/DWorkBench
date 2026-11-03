@@ -1,7 +1,7 @@
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading.RateLimiting;
-using LogDesk;
+using DWorkBench;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
@@ -13,8 +13,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.local.json", optional: true).AddEnvironmentVariables();
 if (OperatingSystem.IsWindows())
 {
-    builder.Services.AddWindowsService(options => options.ServiceName = "LogDesk");
-    builder.Services.Configure<Microsoft.Extensions.Logging.EventLog.EventLogSettings>(options => { if (OperatingSystem.IsWindows()) options.SourceName = "LogDesk"; });
+    builder.Services.AddWindowsService(options => options.ServiceName = "DWorkBench");
+    builder.Services.Configure<Microsoft.Extensions.Logging.EventLog.EventLogSettings>(options => { if (OperatingSystem.IsWindows()) options.SourceName = "DWorkBench"; });
 }
 var httpsThumbprint = builder.Configuration["Hosting:HttpsCertificateThumbprint"];
 if (!string.IsNullOrEmpty(httpsThumbprint))
@@ -37,6 +37,8 @@ root = Path.GetFullPath(root);
 Directory.CreateDirectory(root);
 var keyPath = Path.Combine(root, "secrets", "keys");
 Directory.CreateDirectory(keyPath);
+// Persisted cryptographic identity: keep this stable across the product rename
+// so existing key rings can still decrypt saved SSH credentials.
 var protection = builder.Services.AddDataProtection().SetApplicationName("LogDesk.v1").PersistKeysToFileSystem(new DirectoryInfo(keyPath));
 var certPath = builder.Configuration["Protection:CertificatePath"];
 var thumbprint = builder.Configuration["Protection:CertificateThumbprint"];
@@ -54,10 +56,21 @@ else if (!builder.Environment.IsDevelopment()) throw new InvalidOperationExcepti
 
 var provider = builder.Configuration["Database:Provider"] ?? "Postgres";
 if (provider == "Sqlite" && !builder.Environment.IsDevelopment()) throw new InvalidOperationException("SQLite is only enabled for local development and tests.");
+var databaseConnection = builder.Configuration.GetConnectionString("DWorkBench");
+if (string.IsNullOrWhiteSpace(databaseConnection))
+    databaseConnection = builder.Configuration.GetConnectionString("LogDesk"); // Existing installations.
 builder.Services.AddDbContextFactory<AppDb>(options =>
 {
-    if (provider == "Sqlite") options.UseSqlite("Data Source=" + Path.Combine(root, "logdesk.db") + ";Default Timeout=30");
-    else options.UseNpgsql(builder.Configuration.GetConnectionString("LogDesk") ?? throw new InvalidOperationException("Configure ConnectionStrings:LogDesk."));
+    if (provider == "Sqlite")
+    {
+        var databasePath = Path.Combine(root, "dworkbench.db");
+        var legacyPath = Path.Combine(root, "logdesk.db");
+        // Reuse the existing SQLite file in place, including its WAL companions.
+        if (!File.Exists(databasePath) && File.Exists(legacyPath)) databasePath = legacyPath;
+        options.UseSqlite("Data Source=" + databasePath + ";Default Timeout=30");
+    }
+    else options.UseNpgsql(!string.IsNullOrWhiteSpace(databaseConnection) ? databaseConnection
+        : throw new InvalidOperationException("Configure ConnectionStrings:DWorkBench."));
 });
 builder.Services.AddIdentityCore<AppUser>(options =>
 {
@@ -69,7 +82,7 @@ builder.Services.AddIdentityCore<AppUser>(options =>
 builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme).AddIdentityCookies();
 builder.Services.ConfigureApplicationCookie(options =>
 {
-    options.Cookie.Name = "LogDesk.Session";
+    options.Cookie.Name = "DWorkBench.Session";
     options.Cookie.HttpOnly = true;
     options.Cookie.SameSite = SameSiteMode.Strict;
     options.Cookie.SecurePolicy = builder.Environment.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
@@ -180,7 +193,7 @@ app.UseAuthorization();
 app.UseRateLimiter();
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.MapLogDesk();
+app.MapDWorkBench();
 app.MapWorkspaces();
 app.MapHub<LogsHub>("/hubs/logs", options =>
 {

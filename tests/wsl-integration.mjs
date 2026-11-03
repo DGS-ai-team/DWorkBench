@@ -13,14 +13,14 @@ import net from "node:net";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(
-  path.join(root, "src/LogDesk.Client/package.json"),
+  path.join(root, "src/DWorkBench.Client/package.json"),
 );
 const { HubConnectionBuilder, LogLevel } = require("@microsoft/signalr");
 const { Client: SshClient } = require("ssh2");
 const distro = process.env.WSL_DISTRO ?? "Ubuntu";
 const suffix = randomBytes(5).toString("hex");
 const account = "ldwsl" + suffix;
-const remoteRoot = "/var/tmp/logdesk-wsl-" + suffix;
+const remoteRoot = "/var/tmp/dworkbench-wsl-" + suffix;
 const remoteLog = remoteRoot + "/logs/api space's.log";
 const password = "WslTest-" + randomBytes(24).toString("base64url");
 const adminPassword = "Admin-" + randomBytes(24).toString("base64url");
@@ -360,11 +360,11 @@ PY`);
     [
         process.env.TEST_SERVER_DLL ?? path.join(
         root,
-        "src/LogDesk.Server/bin/Debug/net10.0/LogDesk.Server.dll",
+        "src/DWorkBench.Server/bin/Debug/net10.0/DWorkBench.Server.dll",
       ),
     ],
     {
-      cwd: path.join(root, "src/LogDesk.Server"),
+      cwd: path.join(root, "src/DWorkBench.Server"),
       windowsHide: true,
       env: {
         ...process.env,
@@ -387,7 +387,7 @@ PY`);
         return false;
       }
     },
-    "isolated LogDesk app",
+    "isolated DWorkBench app",
     30000,
   );
   const api = new Api(base);
@@ -743,7 +743,7 @@ if test -f ${remoteRoot}/sshd.pid; then
 fi
 if id ${account} >/dev/null 2>&1; then userdel ${account}; fi
 test "$(readlink -m ${remoteRoot})" = '${remoteRoot}'
-case '${remoteRoot}' in /var/tmp/logdesk-wsl-*) rm -rf -- '${remoteRoot}';; *) exit 1;; esac`);
+case '${remoteRoot}' in /var/tmp/dworkbench-wsl-*) rm -rf -- '${remoteRoot}';; *) exit 1;; esac`);
       pass("Temporary WSL account, sshd and Linux files removed");
     } catch (error) {
       console.error("Cleanup failure: " + error.message);

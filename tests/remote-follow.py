@@ -1,6 +1,7 @@
 """Run on Linux: verify the exact reader embedded and sent by the server."""
 import importlib.util
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
@@ -77,9 +78,17 @@ class FollowChecks(unittest.TestCase):
                 wait_for(b"appended")
                 log.write_bytes(b"cut\n")
                 wait_for(b"cut")
+                process.send_signal(signal.SIGSTOP)
+                _, status = os.waitpid(process.pid, os.WUNTRACED)
+                self.assertTrue(os.WIFSTOPPED(status))
+                with log.open("ab") as file:
+                    file.write(b"final-before-rotation\n")
                 log.rename(str(log) + ".1")
                 log.write_bytes(b"rotated\n")
+                process.send_signal(signal.SIGCONT)
+                wait_for(b"final-before-rotation")
                 wait_for(b"rotated")
+                self.assertLess(output.index(b"final-before-rotation"), output.index(b"rotated"))
                 log.unlink()
                 time.sleep(0.3)
                 log.write_bytes(b"recreated\n")
@@ -93,6 +102,7 @@ class FollowChecks(unittest.TestCase):
                 self.assertNotIn(b"MUST_NOT_LEAK", output)
             finally:
                 if process.poll() is None:
+                    process.send_signal(signal.SIGCONT)
                     process.terminate()
                 process.wait(timeout=5)
                 pump.join(timeout=2)

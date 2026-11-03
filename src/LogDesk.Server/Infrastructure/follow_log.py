@@ -69,8 +69,21 @@ def follow(path):
                     current = os.fstat(fd)
                     replacement = os.fstat(candidate)
                     if (current.st_dev, current.st_ino) != (replacement.st_dev, replacement.st_ino):
-                        os.close(fd)
-                        fd = candidate  # Read a replacement from its beginning.
+                        try:
+                            # Preserve the old inode's unread suffix. Bound the
+                            # drain by its observed size so a writer continuing
+                            # on the old inode cannot starve the replacement.
+                            remaining = max(0, current.st_size - os.lseek(fd, 0, os.SEEK_CUR))
+                            while remaining:
+                                suffix = os.read(fd, min(8192, remaining))
+                                if not suffix:
+                                    break
+                                sys.stdout.buffer.write(suffix)
+                                sys.stdout.buffer.flush()
+                                remaining -= len(suffix)
+                        finally:
+                            os.close(fd)
+                            fd = candidate  # Read a replacement from its beginning.
                     else:
                         os.close(candidate)
                 check_at = time.monotonic() + 0.2

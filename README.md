@@ -16,7 +16,18 @@ Linux 目标机只需已有的 **SSH/SFTP 服务和可读取日志的账号**。
 - 按账号自动保存最近工作台：日志组、关注文件、双窗布局、固定状态、筛选/格式、换行及关注规则；刷新或重新登录后还原布局，点击“恢复接收”重新校验并连接。支持本机未同步草稿和多页面版本冲突提示。
 - 主机测试后直达日志源；目录与文件模式可在保存前做有界 SFTP 预览；日志组直达清单；团队权限显示实际可访问来源。
 - SFTP 原始字节下载，长度和内容来自同一个已打开句柄，浏览器接管下载进度；操作审计记录配置变更、权限、扫描、访问和下载结果。
-- Windows 服务安装脚本、自包含发布脚本、Windows/Linux 基础 CI 定义及 PostgreSQL 集成验证。
+- Windows 交互安装向导、数据库初始化和安装检查脚本、自包含发布及 Windows/Linux/PostgreSQL CI。
+
+## 安装 v0.1.0
+
+从 [v0.1.0 发布页](https://github.com/DGS-ai-team/DWorkBench/releases/tag/v0.1.0) 下载 `DWorkBench-v0.1.0-win-x64.zip` 及配套 `.sha256`。这是首个公开版本；文档中的 0.7、0.8、0.9 是发布前内部迭代编号。
+
+1. 在 Windows Server 2022 上准备 PostgreSQL 17、组织信任的 HTTPS RSA 证书及内部域名；离线环境提前带入完整安装程序和证书链。
+2. 按 [快速安装说明](deploy/QUICKSTART.zh-CN.md) 校验包，完整解压至新的专用目录，例如 `D:\DWorkBench\app`。
+3. 双击包内 **`Install.cmd`**，按向导填写数据库、证书和允许访问的网段。向导可创建业务数据库、导入 HTTPS PFX、生成并备份独立凭据保护证书，随后安装和检查 Windows 服务。
+4. 打开向导给出的 HTTPS 地址，用初始化令牌创建首个管理员，再配置 Linux 主机和日志组。
+
+无需在目标 VM 安装 SDK、Node.js、WSL 或远端组件。完整前提、升级/回滚和手动参数见 [部署说明](docs/DEPLOYMENT.md)，本版范围见 [发布说明](docs/releases/v0.1.0.md)。
 
 ## 本地运行
 
@@ -36,13 +47,13 @@ Linux 目标机只需已有的 **SSH/SFTP 服务和可读取日志的账号**。
 ./scripts/Publish-Windows.ps1
 ```
 
-生成 artifacts/windows/DWorkBench.zip。解压后用包内 Install-Windows.ps1 配置 PostgreSQL、HTTPS 与凭据保护证书。应用和数据库原生运行在 Windows，MVP 不依赖 WSL；具体步骤见 [部署与使用说明](docs/DEPLOYMENT.md)。
+生成 `artifacts/windows/DWorkBench.zip` 及 `.sha256`，包含应用、交互安装向导、检查脚本、版本信息、部署文档和许可证。输出目录必须为空；再次构建时指定新的专用目录，例如 `./scripts/Publish-Windows.ps1 -Output 'D:\builds\DWorkBench-0.1.0'`。不要将构建输出指向已安装的应用目录。
 
 管理网络无法访问互联网时，按 [离线安装说明](docs/DEPLOYMENT.md#离线安装windows-server-2022) 提前准备发布包、SHA-256、PostgreSQL 完整安装包及证书。目标 VM 不需要安装 SDK、Node.js 或在线还原依赖；DEPLOYMENT.md 随发布包提供，可在内网直接阅读。
 
 ## 验证
 
-第一阶段回归与稳定性收尾、第二阶段工作台保存与恢复已实现。CI 在每个 PR、推送到 `main` 以及手动触发时运行；具体结果以该提交的 GitHub Actions 状态为准，历史本地结果见 [验证记录](docs/VALIDATION.md)。
+第一阶段回归与稳定性收尾、第二阶段工作台保存与恢复已实现。CI 在每个 PR、推送到 `main`、推送 `v*` 标签以及手动触发时运行；具体结果以该提交的 GitHub Actions 状态为准，历史本地结果见 [验证记录](docs/VALIDATION.md)。
 
 | CI 检查 | 覆盖范围 |
 | --- | --- |
@@ -52,7 +63,7 @@ Linux 目标机只需已有的 **SSH/SFTP 服务和可读取日志的账号**。
 | 短时负载 | 8 / 32 订阅共享同一读取器，检查缺口、队列上限和退出释放；每档 5 秒，不用于承诺生产容量 |
 | Windows 发布包 | 自包含发布、SHA-256、程序启动、首页/JS/Worker 和许可证；通过后上传 `DWorkBench-win-x64` Artifact，保留 14 天 |
 
-失败日志、截图及负载报告作为诊断 Artifact 保留 7 天；数据库、保护密钥、Cookie 和本机开发配置不上传。过时的同一 PR 流水线自动取消，各任务有超时限制。流水线只构建和验证，目标 Windows Server 的部署仍按部署文档执行。
+失败日志、截图及负载报告作为诊断 Artifact 保留 7 天；数据库、保护密钥、Cookie 和本机开发配置不上传。过时的同一 PR 流水线自动取消，各任务有超时限制。版本标签的全部检查通过后，发布任务复用同次 CI 的 Windows 成品包，生成带版本号的 GitHub Release；不在检查后重新编译，也不自动部署目标 Windows Server。
 
 ```powershell
 cd src/DWorkBench.Client

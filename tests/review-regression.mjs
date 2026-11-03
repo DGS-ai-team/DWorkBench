@@ -96,7 +96,7 @@ export async function reviewBrowserChecks({ page: p, admin, fixtures, until }) {
     await p.getByRole('button', { name: '修改密码', exact: true }).click();
     const dialog = p.getByRole('dialog');
     await dialog.getByLabel('当前密码', { exact: true }).fill(current);
-    await dialog.getByLabel('新密码', { exact: true }).fill(next);
+    await dialog.getByLabel(/^新密码/).fill(next);
     await dialog.getByLabel('再次输入新密码', { exact: true }).fill(next);
     await dialog.getByRole('button', { name: '保存', exact: true }).click();
     await dialog.waitFor({ state: 'hidden' });

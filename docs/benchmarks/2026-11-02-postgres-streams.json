@@ -1,0 +1,131 @@
+{
+  "startedAt": "2026-11-02T07:17:00.269Z",
+  "environment": {
+    "os": "win32",
+    "cpus": 16,
+    "node": "v24.18.0",
+    "database": "Postgres",
+    "transport": "loopback SSH/SFTP fixture + HTTP/WebSocket",
+    "tls": false
+  },
+  "stages": [
+    {
+      "label": "shared-8x1000",
+      "subscriptions": 8,
+      "users": 8,
+      "requestedLinesPerSecond": 1000,
+      "actualLinesPerSecond": 1000.0586361725301,
+      "seconds": 10.0194125,
+      "remoteReaders": 1,
+      "generatedLines": 10020,
+      "receivedLines": 80160,
+      "gaps": 0,
+      "inputMiBPerSecond": 0.15124295966314766,
+      "sshPayloadMiBPerSecond": 0.15124295966314766,
+      "deliveredMiBPerSecond": 1.2099436773051813,
+      "p50Ms": 32,
+      "p95Ms": 49,
+      "p99Ms": 51,
+      "resources": {
+        "seconds": 10.3224821,
+        "cpuMachinePercent": 0.9554285065718249,
+        "privatePeakMiB": 111.75,
+        "cpuOneCorePercent": 15.288217521277177,
+        "workingSetPeakMiB": 207.09,
+        "threadPeak": 46,
+        "logicalCores": 16,
+        "workingSetMeanMiB": 193.55200000000002
+      },
+      "generatorAndClientsOneCorePercent": 4.361533173726503,
+      "broker": {
+        "readers": 1,
+        "subscriptions": 8,
+        "activeSubscriptions": 8,
+        "drainingSubscriptions": 0,
+        "idleReaders": 0,
+        "bufferedCharacters": 0,
+        "replayCharacters": 29462,
+        "slowDisconnected": 0,
+        "publishedCharacters": 1907511,
+        "publishedFrames": 327,
+        "limits": {
+          "readersPerHost": 8,
+          "readersGlobal": 32,
+          "subscribersPerUser": 4,
+          "subscribersPerHost": 128,
+          "subscribersGlobal": 512,
+          "subscriberFrames": 64,
+          "subscriberCharacters": 262144,
+          "replayLines": 200,
+          "replayCharacters": 131072,
+          "frameCharacters": 32768,
+          "batchMilliseconds": 40,
+          "readerIdleSeconds": 3
+        }
+      }
+    },
+    {
+      "label": "shared-32x1000",
+      "subscriptions": 32,
+      "users": 8,
+      "requestedLinesPerSecond": 1000,
+      "actualLinesPerSecond": 1001.6358255160569,
+      "seconds": 10.018611300000003,
+      "remoteReaders": 1,
+      "generatedLines": 10035,
+      "receivedLines": 321120,
+      "gaps": 0,
+      "inputMiBPerSecond": 0.15214803466306193,
+      "sshPayloadMiBPerSecond": 0.15214803466306193,
+      "deliveredMiBPerSecond": 4.868737109217982,
+      "p50Ms": 29,
+      "p95Ms": 53,
+      "p99Ms": 55,
+      "resources": {
+        "seconds": 10.357627299999999,
+        "cpuMachinePercent": 0.5656539142671638,
+        "privatePeakMiB": 117.27,
+        "cpuOneCorePercent": 9.051290462514764,
+        "workingSetPeakMiB": 211.88,
+        "threadPeak": 52,
+        "logicalCores": 16,
+        "workingSetMeanMiB": 207.51499999999996
+      },
+      "generatorAndClientsOneCorePercent": 9.821720501323368,
+      "broker": {
+        "readers": 1,
+        "subscriptions": 32,
+        "activeSubscriptions": 32,
+        "drainingSubscriptions": 0,
+        "idleReaders": 0,
+        "bufferedCharacters": 0,
+        "replayCharacters": 29430,
+        "slowDisconnected": 0,
+        "publishedCharacters": 3826839,
+        "publishedFrames": 653,
+        "limits": {
+          "readersPerHost": 8,
+          "readersGlobal": 32,
+          "subscribersPerUser": 4,
+          "subscribersPerHost": 128,
+          "subscribersGlobal": 512,
+          "subscriberFrames": 64,
+          "subscriberCharacters": 262144,
+          "replayLines": 200,
+          "replayCharacters": 131072,
+          "frameCharacters": 32768,
+          "batchMilliseconds": 40,
+          "readerIdleSeconds": 3
+        }
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "all subscribers and remote readers released",
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "finishedAt": "2026-11-02T07:17:38.834Z"
+}

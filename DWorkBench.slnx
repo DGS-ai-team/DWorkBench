@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LogDesk.Server/LogDesk.Server.csproj" />
+  </Folder>
+</Solution>

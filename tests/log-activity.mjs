@@ -1,0 +1,56 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {writeFile} from 'node:fs/promises';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
+const require=createRequire(path.resolve('src/LogDesk.Client/package.json'));
+const {build}=require('esbuild');
+async function bundle(entry,name){const r=await build({entryPoints:[entry],bundle:true,format:'esm',platform:'node',write:false});const file=path.resolve('.local/'+name+'.mjs');await writeFile(file,r.outputFiles[0].contents);return pathToFileURL(file);}
+const {LogActivity}=await import(await bundle('src/LogDesk.Client/src/logActivity.ts','activity-check'));
+const activity=new LogActivity(100000);
+activity.setRule({pattern:'timeout',mode:'text',caseSensitive:false},100000);
+const row=(id,text)=>({id,text,level:'unknown'});
+activity.add(row(1,'timeout replay'),100000,false);
+assert.equal(activity.snapshot(100000).received,0,'shared replay must not inflate live activity');
+activity.add(row(2,'TIMEOUT live'),101000,true);
+activity.add(row(3,'okay'),102000,true);
+assert.equal(activity.snapshot(102000).received,2);
+assert.equal(activity.snapshot(102000).matches,1);
+assert.equal(activity.snapshot(102000).hit.id,2);
+activity.setRule({pattern:'(a)\\1',mode:'regex',caseSensitive:false},103000);
+assert.ok(activity.snapshot(103000).error);
+activity.add(row(4,'timeout again'),104000,true);
+assert.equal(activity.snapshot(104000).matches,2,'invalid rule retains previous valid matcher and counts');
+activity.acknowledge();assert.equal(activity.snapshot(104000).unseen,0);
+assert.equal(activity.snapshot(164000).received,0,'rolling window expires during idle');
+assert.equal(activity.snapshot(164000).hit.id,4,'last hit retains its timestamp beyond the window');
+activity.reset(165000);assert.equal(activity.snapshot(165000).hit,null);
+console.log('PASS activity: replay exclusion, case-insensitive rule, invalid RE2 fallback, acknowledgement, idle expiry and reset');
+
+const messages=[],timers=[];
+const originalInterval=globalThis.setInterval;
+globalThis.setInterval=(...args)=>{const id=originalInterval(...args);timers.push(id);return id;};
+globalThis.self={postMessage:message=>messages.push(message)};
+await import(await bundle('src/LogDesk.Client/src/log.worker.ts','activity-worker-check'));
+const send=data=>self.onmessage({data:{epoch:0,...data}});
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+try {
+  send({type:'watch-rule',rule:{pattern:'needle',mode:'text',caseSensitive:false}});
+  send({type:'visibility',visible:false});messages.length=0;
+  send({type:'append',segments:[{chunk:'needle replay\n',live:false,at:Date.now()},{chunk:'needle live\nokay\n',live:true,at:Date.now()}]});
+  await sleep(1100);
+  assert.equal(messages.filter(m=>m.type==='view').length,0,'hidden sessions must not ship full rows');
+  const summary=messages.filter(m=>m.type==='activity').at(-1).activity;
+  assert.equal(summary.received,2);assert.equal(summary.matches,1);
+  send({type:'visibility',visible:true});
+  assert.equal(messages.at(-1).rows.length,3,'switching back reconstructs retained history');
+  send({type:'freeze',frozen:true});await sleep(130);
+  send({type:'visibility',visible:false});
+  send({type:'append',segments:[{chunk:'needle while frozen\n',live:true,at:Date.now()}]});await sleep(1100);
+  send({type:'visibility',visible:true});
+  assert.equal(messages.at(-1).rows.length,3,'frozen view survives background switch');
+  assert.equal(messages.at(-1).stats.total,4,'frozen background session keeps ingesting');
+  send({type:'freeze',frozen:false});await sleep(130);
+  assert.equal(messages.at(-1).rows.length,4);
+  console.log('PASS worker: background sends only activity, foreground resumes buffered rows, freeze persists while live ingestion continues');
+} finally {timers.forEach(clearInterval);globalThis.setInterval=originalInterval;delete globalThis.self;}

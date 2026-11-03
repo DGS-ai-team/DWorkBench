@@ -1,0 +1,136 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  core:
+    name: Build and regression (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      DOTNET_EXE: dotnet
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src/LogDesk.Client/package-lock.json
+      - name: Install client dependencies
+        run: npm ci
+        working-directory: src/LogDesk.Client
+      # Vite generates wwwroot; finish before ASP.NET computes static assets.
+      - name: Build client
+        run: npm run build
+        working-directory: src/LogDesk.Client
+      - run: dotnet build src/LogDesk.Server --nologo
+      - run: dotnet run --project tests/LogDesk.CoreChecks
+      - run: node tests/log-processing.mjs
+      - run: node tests/log-activity.mjs
+      - run: npx playwright install chromium --with-deps
+        working-directory: src/LogDesk.Client
+      - name: SQLite, SSH and browser regression
+        run: node tests/integration.mjs
+      - name: Shared stream load smoke
+        run: node tests/load.mjs
+        env:
+          LOAD_SHORT: '1'
+          LOAD_SECONDS: '5'
+          SKIP_BROWSER: '1'
+      - name: Publish Windows self-contained package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/Publish-Windows.ps1
+      - name: Check Windows package
+        if: runner.os == 'Windows'
+        run: node tests/package.mjs
+      - name: Upload Windows package
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: LogDesk-win-x64
+          path: |
+            artifacts/windows/LogDesk.zip
+            artifacts/windows/LogDesk.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostics-${{ matrix.os }}
+          # Explicit files only: never upload databases, cookies or keys.
+          path: |
+            .local/mvp-*.png
+            .local/load-results.json
+            .local/integration-*/server.log
+            .local/load-shared-*/server.log
+            .local/package-*/server.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+  postgres:
+    name: PostgreSQL regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: logdesk_test
+          POSTGRES_USER: logdesk_test
+          POSTGRES_PASSWORD: integration-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U logdesk_test -d logdesk_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src/LogDesk.Client/package-lock.json
+      - run: npm ci
+        working-directory: src/LogDesk.Client
+      - run: npm run build
+        working-directory: src/LogDesk.Client
+      - run: dotnet build src/LogDesk.Server --nologo
+      - name: PostgreSQL, authorization and workspace regression
+        run: node tests/integration.mjs
+        env:
+          DOTNET_EXE: dotnet
+          SKIP_BROWSER: '1'
+          TEST_DATABASE_PROVIDER: Postgres
+          ConnectionStrings__LogDesk: Host=127.0.0.1;Port=5432;Database=logdesk_test;Username=logdesk_test;Password=integration-only-password
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-postgres
+          path: .local/integration-*/server.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7

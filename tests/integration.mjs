@@ -127,8 +127,11 @@ try{
   await until(()=>content.includes('服务已启动')&&a.active===1);
   const sharedStatus=await admin.request('/streams/status');assert.equal(sharedStatus.readers,1);assert.equal(sharedStatus.subscriptions,4);
   await new Promise((resolve,reject)=>{hub.stream('Watch',group.id,fa.id).subscribe({next:()=>{},error:resolve,complete:()=>reject(new Error('fifth stream unexpectedly admitted'))})});
-  subscriptions.forEach(s=>s.dispose());await until(()=>a.active===0);
-  const restarted=hub.stream('Watch',group.id,fa.id).subscribe({next:()=>{},error:error=>{throw error}});await until(()=>a.active===1);restarted.dispose();await until(()=>a.active===0);
+  const fullyIdle=async()=>{const s=await admin.request('/streams/status');return s.readers===0&&s.subscriptions===0&&a.active===0&&b.active===0};
+  // The fixture's exec channel closes before the server finishes disposing its
+  // SSH client. Wait for both sides before testing a fresh subscription.
+  subscriptions.forEach(s=>s.dispose());await until(fullyIdle);
+  const restarted=hub.stream('Watch',group.id,fa.id).subscribe({next:()=>{},error:error=>{throw error}});await until(()=>a.active===1);restarted.dispose();await until(fullyIdle);
   let forbidden=false;const vh=new HubConnectionBuilder().withUrl(base+'/hubs/logs',{headers:{Cookie:v.cookie()}}).configureLogging(LogLevel.None).build();await vh.start();
   await new Promise((resolve,reject)=>vh.stream('Watch',group.id,fb.id).subscribe({next:()=>reject(new Error('unauthorized stream emitted data')),error:()=>{forbidden=true;resolve()},complete:resolve}));assert.ok(forbidden);
   let revoked=false,survivorCharacters=0;
@@ -138,7 +141,7 @@ try{
   await admin.request(`/users/${viewer.id}/grants`,[],'PUT',204);await until(()=>revoked,10000);viewerStream.dispose();
   assert.ok((await v.request('/workspace')).resolved.every(r=>r.file===null&&r.issue),'restoring a saved workspace respects revoked grants');
   assert.equal(a.active,1,'revoking one subscriber must preserve the shared reader for an authorized subscriber');assert.ok(survivorCharacters>survivorBefore);
-  survivor.dispose();await until(()=>a.active===0,10000);
+  survivor.dispose();await until(fullyIdle,10000);
   await vh.stop();
   let failed=false,healthyText='',recoveredText='';
   const broken=hub.stream('WatchV2',group.id,fa.id).subscribe({next:()=>{},error:()=>{failed=true},complete:()=>{failed=true}});
@@ -169,7 +172,7 @@ try{
     const {chromium}=require('@playwright/test');browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:1440,height:940},locale:'zh-CN'});const p=await context.newPage();const errors=[];p.on('pageerror',e=>errors.push(e.message));
     await p.goto(base);await p.getByLabel('登录名',{exact:true}).fill('admin');await p.getByLabel('密码',{exact:true}).fill('IntegrationAdmin123');await p.getByRole('button',{name:'登录',exact:true}).click();
     await p.getByRole('button',{name:'日志清单'}).click();await p.getByLabel("选择 api space's.log").first().check();await p.getByLabel("选择 api space's.log").nth(1).check();await p.getByRole('button',{name:'加入并阅读'}).click();
-    await until(()=>a.active>0&&b.active>0);await p.getByText('服务已启动',{exact:false}).first().waitFor();
+    await until(()=>a.active>0&&b.active>0);await p.locator('.log-pane').first().getByText('request completed',{exact:false}).first().waitFor();
     await p.screenshot({path:path.join(root,'.local/mvp-workspace.png'),fullPage:true});
     const before=await p.locator('.log-pane').first().boundingBox();await p.getByRole('button',{name:'日志清单'}).click();await p.getByRole('dialog').waitFor();await p.locator('.file-table-row').first().waitFor();const after=await p.locator('.log-pane').first().boundingBox();assert.equal(before.width,after.width,'drawer must not resize log panes');
     await p.screenshot({path:path.join(root,'.local/mvp-inventory.png'),fullPage:true});await p.getByRole('button',{name:'关闭',exact:true}).click();
@@ -185,7 +188,7 @@ try{
     await p.getByRole('button',{name:'专注模式'}).click();assert.equal(await p.locator('.app-header').isVisible(),false);await p.keyboard.press('Escape');assert.equal(await p.locator('.app-header').isVisible(),true);
     await p.getByRole('button',{name:'团队成员',exact:true}).click();await p.getByRole('heading',{name:'团队成员'}).waitFor();await p.getByRole('button',{name:'添加成员'}).click();await p.getByLabel('登录名',{exact:true}).fill('browseruser');await p.getByLabel('显示名称').fill('浏览器测试成员');await p.getByLabel('初始密码').fill('BrowserUser12345');await p.getByRole('button',{name:'保存',exact:true}).click();await p.getByRole('heading',{name:'浏览器测试成员'}).waitFor();
     assert.equal(a.active+b.active,1,'opening management pages must preserve active streams');
-    await p.getByRole('button',{name:'日志工作台',exact:true}).click();assert.equal(await p.locator('.log-pane').count(),2);await p.locator('.log-pane').first().getByText('服务已启动',{exact:false}).waitFor();
+    await p.getByRole('button',{name:'日志工作台',exact:true}).click();assert.equal(await p.locator('.log-pane').count(),2);await p.locator('.log-pane').first().getByText('request completed',{exact:false}).first().waitFor();
     await workspaceBrowserChecks({page:p,admin,fixtures:[a,b],until});
     await p.screenshot({path:path.join(root,'.local/mvp-workspace-restored.png'),fullPage:true});
     assert.deepEqual(errors,[]);await context.close();await browser.close();browser=null;

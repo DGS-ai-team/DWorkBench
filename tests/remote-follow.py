@@ -17,6 +17,40 @@ spec.loader.exec_module(reader)
 
 
 class FollowChecks(unittest.TestCase):
+    def test_download_rejects_links_and_keeps_validated_descriptor(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / "logs"
+            outside = Path(root) / "outside"
+            directory.mkdir()
+            outside.mkdir()
+            log = directory / "app.log"
+            data = bytes(range(256)) * 4096
+            log.write_bytes(data)
+            (outside / "app.log").write_bytes(b"MUST_NOT_LEAK")
+            process = subprocess.Popen([sys.executable, "-u", str(SCRIPT), "--download", str(log)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+            try:
+                self.assertEqual(int.from_bytes(process.stdout.read(8), "big"), len(data))
+                # Opening is complete, but the pipe is too small to hold the file.
+                # Substitute the parent while the descriptor is still being read.
+                directory.rename(Path(root) / "original")
+                directory.symlink_to(outside, target_is_directory=True)
+                output, errors = process.communicate(timeout=5)
+                self.assertEqual(process.returncode, 0, errors)
+                self.assertEqual(output, data)
+                rejected = subprocess.run([sys.executable, "-u", str(SCRIPT), "--download", str(log)], capture_output=True, timeout=5)
+                self.assertEqual(rejected.returncode, 78)
+                self.assertEqual(rejected.stdout, b"")
+                directory.unlink()
+                directory.mkdir()
+                log.symlink_to(outside / "app.log")
+                rejected = subprocess.run([sys.executable, "-u", str(SCRIPT), "--download", str(log)], capture_output=True, timeout=5)
+                self.assertEqual(rejected.returncode, 78)
+                self.assertEqual(rejected.stdout, b"")
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                process.communicate(timeout=5)
+
     def test_idle_reader_exits_when_output_pipe_closes(self):
         with tempfile.TemporaryDirectory() as root:
             log = Path(root) / "empty.log"

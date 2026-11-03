@@ -334,22 +334,17 @@ public static class Endpoints
         await audit.Write(user, "download.started", $"{source.Host.Name}:{file.Path}");
         try
         {
-            using var sftp = await remote.Sftp(source.Host, ctx.RequestAborted);
-            var attributes = await sftp.GetAttributesAsync(file.Path, ctx.RequestAborted);
-            if (!attributes.IsRegularFile || attributes.IsSymbolicLink) throw new ApiError(409, "目标不是普通文件。");
-            using var stream = sftp.OpenRead(file.Path);
-            var remaining = attributes.Size;
-            ctx.Response.ContentType = "application/octet-stream";
-            ctx.Response.ContentLength = remaining;
-            ctx.Response.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment") { FileNameStar = file.Name }.ToString();
-            var buffer = new byte[64 * 1024]; var recheckAt = DateTimeOffset.UtcNow.AddSeconds(5);
-            while (remaining > 0)
+            var recheckAt = DateTimeOffset.UtcNow.AddSeconds(5);
+            await remote.Download(source, file, length =>
+            {
+                ctx.Response.ContentType = "application/octet-stream";
+                ctx.Response.ContentLength = length;
+                ctx.Response.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment") { FileNameStar = file.Name }.ToString();
+            }, async (chunk, transferToken) =>
             {
                 if (DateTimeOffset.UtcNow >= recheckAt) { await access.File(await access.User(user.Id), id, fileId, "download"); recheckAt = DateTimeOffset.UtcNow.AddSeconds(5); }
-                var count = await stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, remaining)), ctx.RequestAborted);
-                if (count == 0) throw new ApiError(409, "远程文件在下载中被截断，请重新下载。");
-                await ctx.Response.Body.WriteAsync(buffer.AsMemory(0, count), ctx.RequestAborted); remaining -= count;
-            }
+                await ctx.Response.Body.WriteAsync(chunk, transferToken);
+            }, ctx.RequestAborted);
             await audit.Write(user, "download.completed", $"{source.Host.Name}:{file.Path}");
         }
         catch (Exception error)

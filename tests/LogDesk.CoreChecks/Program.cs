@@ -49,6 +49,42 @@ var file = new FileEntry { SourceId = source.Id, Name = "app.log", Path = "/logs
     Check(remote.Active == 0, "shutdown must release remote reader");
 }
 
+// Each frame must survive independent JSON serialization without splitting scalars.
+{
+    var remote = new FakeReader(); var broker = Broker(remote);
+    using var subscriber = broker.Subscribe("unicode", source, file);
+    var received = new ConcurrentQueue<string>();
+    var pump = Task.Run(async () =>
+    {
+        await foreach (var frame in subscriber.Read(CancellationToken.None))
+        {
+            var copy = JsonSerializer.Deserialize<LogFrame>(JsonSerializer.Serialize(frame))!;
+            Check(copy.Text == frame.Text, "frame contains an isolated surrogate");
+            if (copy.Kind == "data") received.Enqueue(copy.Text);
+        }
+    });
+    try
+    {
+        await Until(() => remote.Active == 1, "unicode reader");
+        var boundary = new string('a', 32767) + "😀 boundary\n";
+        remote.Feed(boundary);
+        await Until(() => string.Concat(received) == boundary, "pair crossing frame capacity");
+        remote.Feed("chunk \uD83D");
+        await Until(() => string.Concat(received) == boundary + "chunk ", "timer holds trailing high surrogate");
+        await Task.Delay(50);
+        Check(string.Concat(received) == boundary + "chunk ", "timer must not serialize half a pair");
+        remote.Feed("\uDE00 done\n");
+        var expected = boundary + "chunk 😀 done\n";
+        await Until(() => string.Concat(received) == expected, "pair crossing adapter chunks");
+        using var late = broker.Subscribe("unicode-late", source, file);
+        await using var replay = late.Read(CancellationToken.None).GetAsyncEnumerator();
+        await replay.MoveNextAsync(); await replay.MoveNextAsync();
+        Check(JsonSerializer.Deserialize<LogFrame>(JsonSerializer.Serialize(replay.Current))!.Text == expected, "Unicode replay must match live frames");
+    }
+    finally { subscriber.Dispose(); await pump; await broker.StopAsync(CancellationToken.None); }
+    Console.WriteLine("PASS Unicode scalar integrity across frame size, timed flush, adapter chunks and replay");
+}
+
 // Config/credentials and encoding changes must never inherit the old reader/cache.
 {
     var remote = new FakeReader(); var broker = Broker(remote);

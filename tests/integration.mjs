@@ -30,6 +30,13 @@ async function fixture(label){
     client.on('authentication',ctx=>{if(ctx.method==='password'){authenticationCount++;if(ctx.username==='reader'&&ctx.password==='FixtureSecret123')return ctx.accept()}ctx.reject(['password'])});
     client.on('ready',()=>client.on('session',accept=>{const session=accept();
       session.on('exec',(accept,reject,info)=>{
+        const download=[...files.keys()].find(p=>info.command===remoteCommand(p,true));
+        if(download){
+          const stream=accept(),data=files.get(download),header=Buffer.alloc(8);header.writeBigUInt64BE(BigInt(data.length));
+          const read=()=>{stream.write(header);stream.write(data);stream.exit(0);stream.end()};
+          if(holdReads)pendingReads.push(read);else read();
+          return;
+        }
         const filename=[...files.keys()].find(p=>info.command===remoteCommand(p));if(!filename)return reject();
         const stream=accept();active++;stream.write(files.get(filename));
         const timer=setInterval(()=>stream.write(`2026-11-02 10:15:02.125 INFO  [${label}] request completed duration=12ms ✓\n`),180);

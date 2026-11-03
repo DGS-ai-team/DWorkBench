@@ -2,7 +2,7 @@
 
 Every path component and every replacement is opened with O_NOFOLLOW. Keep the
 opened descriptor for reads, so a later path substitution cannot redirect it.
-Output is original bytes; the server only admits LF-compatible encodings.
+Output is original bytes; streaming only admits LF-compatible encodings.
 """
 import os
 import select
@@ -45,6 +45,24 @@ def snapshot(fd):
         data = data[boundary + 1:] if boundary >= 0 else b""
     lines = 201 if data.endswith(b"\n") else 200
     return b"\n".join(data.split(b"\n")[-lines:])
+
+
+def download(path):
+    fd = open_regular(path)
+    try:
+        remaining = os.fstat(fd).st_size
+        # Fixed-width length prefix comes from the same descriptor as the data.
+        sys.stdout.buffer.write(remaining.to_bytes(8, "big"))
+        sys.stdout.buffer.flush()
+        while remaining:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                raise ValueError("file truncated during download")
+            sys.stdout.buffer.write(chunk)
+            remaining -= len(chunk)
+        sys.stdout.buffer.flush()
+    finally:
+        os.close(fd)
 
 
 def follow(path):
@@ -101,7 +119,10 @@ def follow(path):
 
 if __name__ == "__main__":
     try:
-        follow(sys.argv[1])
+        if len(sys.argv) == 3 and sys.argv[1] == "--download":
+            download(sys.argv[2])
+        else:
+            follow(sys.argv[1])
     except BrokenPipeError:
         os._exit(0)
     except (OSError, ValueError):

@@ -4,7 +4,7 @@
 
 已实现本地账号、角色和主机/日志组交集授权、共享主机与来源配置、SSH 指纹探测和确认、后台 SFTP 渐进扫描、游标分页清单、最多四个实时关注文件及一到两个阅读窗格、原始文件下载和操作审计。正式部署目标是现有的 Windows Server 2022 VM；服务端核心目标框架为 net10.0。
 
-MVP 使用一个 Web 服务进程和 PostgreSQL。Linux 目标需要 SSH 密码认证、SFTP 和 Python 3。流式读取通过 SSH 临时执行内置只读 Python 脚本，不安装代理或写入远端脚本文件；缺少 Python 3 时直接报错，不回退到不受保护的 tail。文件和路径各级目录不能是符号链接。
+MVP 使用一个 Web 服务进程和 PostgreSQL。Linux 目标需要 SSH 密码认证、SFTP 和 Python 3。流式读取和下载通过 SSH 临时执行内置只读 Python 脚本，不安装代理或写入远端脚本文件；缺少 Python 3 时直接报错，不回退到不受保护的 tail/SFTP 文件读取。文件和路径各级目录不能是符号链接；SFTP 用于目录清单。
 
 流式编码支持 UTF-8、GB18030、GB2312/GBK、ISO-8859-1 和 ASCII。UTF-16/UTF-32 目前不支持流式读取，已有这类配置的原文件仍可下载查看。SSO、Ansible、跳板机和任意命令终端属于后续扩展。
 
@@ -102,7 +102,7 @@ $connection = $null
 - 单 VM/服务重启会中断查看和下载；恢复后重新打开。只读跟随脚本支持追加、截断、轮转和删除重建；每次重新打开均以 O_NOFOLLOW 拒绝符号链接。初始快照有界（最近 128 KiB 内最多 200 个完整行），不保证补齐断线期间内容。
 - 标准 SFTP 仍需枚举大目录的全部元数据；分页仅约束清单查询和渲染成本。当前未实现元数据与审计保留期的自动清理，应按实际规模监控数据库增长。
 - 当前下载成功审计表示服务端已完成输出；浏览器本地最终落盘由浏览器管理。
-- 管理员可调整来源路径；应用用户不能把任意路径或 Shell 命令直接作为流/下载参数提交。服务器管理员仍是受信任方，MVP 不承诺抵御其在属性校验和读取之间恶意替换文件的行为。
+- 管理员可调整来源路径；应用用户不能把任意路径或 Shell 命令直接作为流/下载参数提交。流和下载逐级拒绝符号链接，并读取已打开的普通文件描述符。服务器管理员仍是受信任方，应用不保证远端普通文件的内容不被其修改。
 
 ### 流服务配置与升级
 
@@ -137,7 +137,7 @@ node tests/integration.mjs
 
 测试使用两个仅监听本机的受控 SSH/SFTP 服务器，不读取实际管理主机。涵盖初始令牌、CSRF、指纹固定、跨主机扫描、200 项游标分页、特殊字符路径、UTF-8 原始字节下载、权限交集、四流配额、取消释放、账号停用、审计，以及浏览器分窗操作。SKIP_BROWSER=1 可仅执行 API/SSH 测试。
 
-开发机安装 WSL 时，可另运行 node tests/wsl-integration.mjs，验证真实 OpenSSH/SFTP 与 Linux tail。已在本机 Ubuntu 26.04 上通过，包括现有 /var/log/dpkg.log 的只读校验。脚本创建独立应用数据库、临时 Linux 账号和回环 SSH 端口，结束后清理 Linux 测试资源；不会为正式运行引入 WSL 依赖。环境要求、清理范围与结果见 [验证记录](VALIDATION.md#本机-wsl-实测)。
+开发机安装 WSL 时，可另运行 node tests/wsl-integration.mjs，验证真实 OpenSSH/SFTP 与 Python 读取器。已在本机 Ubuntu 26.04 上通过，包括现有 /var/log/dpkg.log 的只读校验。脚本创建独立应用数据库、临时 Linux 账号和回环 SSH 端口，结束后清理 Linux 测试资源；不会为正式运行引入 WSL 依赖。环境要求、清理范围与结果见 [验证记录](VALIDATION.md#本机-wsl-实测)。
 
 PostgreSQL 验证需要一个全新的测试数据库，设置 TEST_DATABASE_PROVIDER=Postgres 和 ConnectionStrings__LogDesk 后运行同一脚本。不要指向业务数据库。CI 定义包含 Windows/Linux 基础验证和单独 PostgreSQL 验证；新增 workflow 只有推送到 GitHub 后才会执行，不能将定义存在视为 CI 已通过。
 

@@ -13,7 +13,7 @@
 | 浏览器 UI | React + TypeScript | 日志清单、覆盖式抽屉、可调整多窗格和团队管理页面 |
 | 应用/API | ASP.NET Core、C#、.NET 10 LTS | 用例、会话认证、资源授权、审计和管理 API |
 | 实时推送 | ASP.NET Core SignalR | 将授权后的日志分块推送到浏览器 |
-| SSH/SFTP | SSH.NET | 远程目录枚举、下载和固定模板的 tail 流 |
+| SSH/SFTP | SSH.NET | SFTP 目录枚举、通过内置只读 Python 脚本下载和跟随日志 |
 | 数据库 | PostgreSQL | 共享主机/来源/日志组、账号权限、文件元数据和审计 |
 | 本地身份 | ASP.NET Core Identity | MVP 本地账号、密码散列、登录锁定；未来追加 OIDC 登录提供方 |
 | 后台执行 | ASP.NET Core BackgroundService | MVP 同一服务进程中执行扫描、下载和连接调度任务 |
@@ -25,9 +25,9 @@
 
 ## 2. 总体结构
 
-团队浏览器通过 HTTPS/SignalR 连接 LogDesk Web/API。Web/API 调用本地身份与资源授权、PostgreSQL 和后台扫描/下载/SSH 调度。后台任务经 SSH.NET 连接多台 Linux 主机的 OpenSSH、SFTP 和 tail。后续可以把 SSO 和 Ansible 执行器接到对应接口。
+团队浏览器通过 HTTPS/SignalR 连接 LogDesk Web/API。Web/API 调用本地身份与资源授权、PostgreSQL 和后台扫描/下载/SSH 调度。后台任务经 SSH.NET 连接多台 Linux 主机的 OpenSSH、SFTP，并临时执行内置 Python 读取器。后续可以把 SSO 和 Ansible 执行器接到对应接口。
 
-MVP 部署在已确认能访问全部目标主机的 Windows VM。浏览器经 HTTPS 访问同一 Web 服务，SSH.NET 在服务进程中发起出站 SSH/SFTP；tail 命令运行在远端 Linux 上。浏览器不接收 SSH 凭据。若以后主机分属互相隔离的网络区，可在各区增加执行节点，不需要在每台 Linux 主机安装 LogDesk Agent。
+MVP 部署在已确认能访问全部目标主机的 Windows VM。浏览器经 HTTPS 访问同一 Web 服务，SSH.NET 在服务进程中发起出站 SSH/SFTP；只读 Python 脚本运行在远端 Linux 上。浏览器不接收 SSH 凭据。若以后主机分属互相隔离的网络区，可在各区增加执行节点，不需要在每台 Linux 主机安装 LogDesk Agent。
 
 ```mermaid
 flowchart LR
@@ -45,7 +45,7 @@ flowchart LR
 - **LogDesk.Web**：ASP.NET Core API、SignalR Hub、认证与授权中间件；承载静态 Web 前端。
 - **LogDesk.Application**：日志扫描、开始/停止流、下载、用户/权限管理等用例；定义接口和审计要求。
 - **LogDesk.Domain**：用户授权范围、服务器连接、日志源、日志组、远程文件及审计事件等业务规则。
-- **LogDesk.Infrastructure.Ssh**：SSH.NET 适配器、SFTP、tail 流、主机指纹校验和并发调度。
+- **LogDesk.Infrastructure.Ssh**：SSH.NET 适配器、SFTP 清单、描述符读取与日志跟随、主机指纹校验和并发调度。
 - **LogDesk.Infrastructure.Persistence**：EF Core/Npgsql、PostgreSQL schema、应用配置和审计存储。
 - **LogDesk.Worker**：后台执行接口与任务协调；MVP 可作为 Web 应用中的 Hosted Service，不单独部署。
 - **LogDesk.Client**：React + TypeScript 的浏览器 UI；通过 HTTPS API 和 SignalR 访问服务端。
@@ -168,8 +168,8 @@ SFTP 对大目录枚举通常仍需读取全部目录项；分页和虚拟化解
 ### 5.3 下载
 
 1. 用户发起下载时，服务端验证日志组/主机授权并记录审计。
-2. SSH.NET SFTP 读取开始时的文件长度，异步分块传输到短期临时文件或流式 HTTP 响应，不将整个文件载入内存。
-3. 对外提供下载时以安全文件名和内容类型响应；日志正文不落入长期存储。传输失败删除临时文件并记录失败结果。
+2. 配额等待结束后再次验证账号、SecurityStamp 和文件权限。通过 SSH 执行内置 Python 下载模式，以 `openat`/`O_NOFOLLOW` 校验每一级目录和最终普通文件；长度和正文均来自同一描述符。长度通过固定 8 字节头传给服务端，正文按 64 KiB 分块流式输出 HTTP，不将整个文件载入内存。
+3. 对外提供下载时以安全文件名和内容类型响应；不写临时文件。传输期间每 5 秒重新检查权限，每个数据块有 30 秒传输超时；截断、断开或失败记录失败审计，已开始的 HTTP 响应中断。
 4. 若远程文件在传输期间增长，下载范围固定为启动时的长度并向用户说明。
 
 ## 6. 大清单与性能

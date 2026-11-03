@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.IO.Enumeration;
 using System.Runtime.CompilerServices;
@@ -97,6 +98,43 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
             if (file.IsRegularFile && !file.IsSymbolicLink && FileSystemName.MatchesSimpleExpression(source.Pattern, file.Name, false))
                 yield return new(file.Name, Rules.RemotePath(source.Directory, file.Name), file.Length,
                     new DateTimeOffset(DateTime.SpecifyKind(file.LastWriteTimeUtc, DateTimeKind.Utc)).ToUnixTimeMilliseconds());
+        }
+    }
+    public async Task Download(Source source, FileEntry file, Action<long> begin, Func<ReadOnlyMemory<byte>, CancellationToken, Task> write, CancellationToken ct)
+    {
+        if (source.Host.Fingerprint == null) throw new ApiError(409, "请先测试连接并确认 SSH 主机指纹。");
+        using var client = new SshClient(Info(source.Host));
+        Configure(client, source.Host);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        lifetime.CancelAfter(TimeSpan.FromSeconds(30));
+        using var disconnect = lifetime.Token.Register(() => { try { client.Disconnect(); } catch { } });
+        await client.ConnectAsync(lifetime.Token);
+        using var command = client.CreateCommand("python3 -u -c " + Rules.Quote(Follower) + " --download " + Rules.Quote(file.Path));
+        var execution = command.ExecuteAsync(lifetime.Token);
+        try
+        {
+            var header = new byte[8];
+            try { await command.OutputStream.ReadExactlyAsync(header, lifetime.Token); }
+            catch (EndOfStreamException) { throw new ApiError(502, "远端下载无法打开文件，请确认 Python 3 可用、文件可读且路径各级均不是符号链接。"); }
+            var length = BinaryPrimitives.ReadInt64BigEndian(header);
+            if (length < 0) throw new ApiError(502, "远端下载返回了无效的文件长度。");
+            begin(length);
+            var buffer = new byte[64 * 1024];
+            while (length > 0)
+            {
+                lifetime.CancelAfter(TimeSpan.FromSeconds(30));
+                var count = await command.OutputStream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, length)), lifetime.Token);
+                if (count == 0) throw new ApiError(409, "远程文件在下载中被截断，请重新下载。");
+                await write(buffer.AsMemory(0, count), lifetime.Token);
+                length -= count;
+            }
+            await execution;
+            if (command.ExitStatus != 0) throw new ApiError(502, "远程文件下载未完成，请重新下载。");
+        }
+        finally
+        {
+            await lifetime.CancelAsync();
+            try { await execution; } catch (Exception) when (lifetime.IsCancellationRequested) { }
         }
     }
     public async IAsyncEnumerable<string> Watch(Source source, FileEntry file, [EnumeratorCancellation] CancellationToken ct)

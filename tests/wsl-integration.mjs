@@ -474,8 +474,20 @@ PY`);
     Buffer.from("INFO 服务已启动 ✓\n"),
   );
   pass(
-    "UTF-8 SFTP download bytes match the actual Linux file (space and apostrophe in filename)",
+    "UTF-8 descriptor-based SSH download matches the actual Linux file (space and apostrophe in filename)",
   );
+  // The index remains cached while a source's parent is replaced with a symlink.
+  await wsl(`mkdir ${remoteRoot}/outside\nprintf '%s' MUST_NOT_LEAK > ${quote(remoteRoot + "/outside/api space's.log")}\nchown -R ${account}:${account} ${remoteRoot}/outside\nmv ${remoteRoot}/logs ${remoteRoot}/logs-original\nln -s ${remoteRoot}/outside ${remoteRoot}/logs`);
+  try {
+    const denied = await fetch(`${base}/api/groups/${group.id}/files/${file.id}/download`, { headers: { Cookie: api.cookie() } });
+    assert.equal(denied.status, 502);
+    const body = await denied.text();
+    assert.ok(!body.includes('MUST_NOT_LEAK'));
+    assert.ok(body.includes('Python 3'));
+  } finally {
+    await wsl(`unlink ${remoteRoot}/logs\nmv ${remoteRoot}/logs-original ${remoteRoot}/logs`);
+  }
+  pass("Cached download rejects a replaced parent symlink without disclosing outside bytes");
   hub = new HubConnectionBuilder()
     .withUrl(base + "/hubs/logs", { headers: { Cookie: api.cookie() } })
     .configureLogging(LogLevel.None)

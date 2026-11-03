@@ -119,7 +119,7 @@ public sealed class SharedLogBroker : IHostedService
             await flush;
             lock (gate)
             {
-                Flush(reader);
+                Flush(reader, final: true);
                 foreach (var subscriber in reader.Subscribers.Values) subscriber.Queue.Writer.TryComplete(failure);
                 reader.Subscribers.Clear();
                 reader.Closing = true;
@@ -141,11 +141,20 @@ public sealed class SharedLogBroker : IHostedService
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
     }
 
-    private void Flush(Reader reader)
+    private void Flush(Reader reader, bool final = false)
     {
-        if (reader.Pending.Length == 0) return;
-        var text = reader.Pending.ToString();
-        reader.Pending.Clear();
+        var length = reader.Pending.Length;
+        if (length == 0) return;
+        // StreamReader and frame limits can split a UTF-16 surrogate pair.
+        // Keep its high surrogate until the next chunk, including timer flushes.
+        if (char.IsHighSurrogate(reader.Pending[length - 1]))
+        {
+            if (final) reader.Pending[length - 1] = '\uFFFD';
+            else length--;
+        }
+        if (length == 0) return;
+        var text = reader.Pending.ToString(0, length);
+        reader.Pending.Remove(0, length);
         reader.History.Append(text);
         reader.Sequence++;
         publishedCharacters += text.Length;

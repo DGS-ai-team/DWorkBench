@@ -1,0 +1,293 @@
+name: Verification
+on:
+  workflow_call:
+    inputs:
+      linux:
+        type: boolean
+        default: false
+      browser:
+        type: boolean
+        default: false
+      windows:
+        type: boolean
+        default: false
+      postgres:
+        type: boolean
+        default: false
+      package:
+        type: boolean
+        default: false
+      load:
+        type: boolean
+        default: false
+      extended:
+        type: boolean
+        default: false
+    outputs:
+      qualified:
+        description: All six release baseline checks were requested and succeeded
+        value: ${{ jobs.result.outputs.qualified }}
+permissions:
+  contents: read
+env:
+  DOTNET_EXE: dotnet
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+jobs:
+  linux:
+    name: Linux regression
+    if: inputs.linux || inputs.browser || inputs.load || inputs.extended
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src/DWorkBench.Client/package-lock.json
+      - name: Install client dependencies
+        run: npm ci
+        working-directory: src/DWorkBench.Client
+      # Vite must finish before ASP.NET computes static assets.
+      - name: Build client
+        run: npm run build
+        working-directory: src/DWorkBench.Client
+      - run: dotnet build tests/DWorkBench.CoreChecks --nologo
+      - run: dotnet run --project tests/DWorkBench.CoreChecks --no-build
+      - run: node tests/log-processing.mjs
+      - run: node tests/log-activity.mjs
+      - name: Install Chromium
+        if: inputs.browser || inputs.extended
+        run: npx playwright install chromium --with-deps
+        working-directory: src/DWorkBench.Client
+      - name: SQLite, SSH and selected browser regression
+        run: node tests/integration.mjs
+        env:
+          SKIP_BROWSER: ${{ (inputs.browser || inputs.extended) && '0' || '1' }}
+      - name: Shared stream load smoke
+        if: inputs.load && !inputs.extended
+        run: node tests/load.mjs
+        env:
+          LOAD_SHORT: '1'
+          LOAD_SECONDS: '5'
+          SKIP_BROWSER: '1'
+      - name: Extended load and browser capacity checks
+        if: inputs.extended
+        run: node tests/load.mjs
+        env:
+          LOAD_SECONDS: '15'
+          SKIP_BROWSER: '0'
+      - name: Upload extended load report
+        if: always() && inputs.extended
+        uses: actions/upload-artifact@v4
+        with:
+          name: extended-load-report
+          path: .local/load-results.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-linux
+          # Explicit files only: never upload databases, cookies or keys.
+          path: |
+            .local/mvp-*.png
+            .local/load-results.json
+            .local/integration-*/server.log
+            .local/load-shared-*/server.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+  windows:
+    name: Windows regression and selected package
+    if: inputs.windows || inputs.package || inputs.extended
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src/DWorkBench.Client/package-lock.json
+      - name: Parse deployment scripts with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($file in Get-ChildItem -LiteralPath deploy -Filter '*.ps1' -File -Recurse) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }
+      - name: Install client dependencies
+        run: npm ci
+        working-directory: src/DWorkBench.Client
+      - name: Build client
+        run: npm run build
+        working-directory: src/DWorkBench.Client
+      - name: Build core checks and server
+        if: inputs.windows || inputs.extended
+        run: dotnet build tests/DWorkBench.CoreChecks --nologo
+      - name: Core checks
+        if: inputs.windows || inputs.extended
+        run: dotnet run --project tests/DWorkBench.CoreChecks --no-build
+      - name: Install Chromium for extended profile
+        if: inputs.extended
+        run: npx playwright install chromium --with-deps
+        working-directory: src/DWorkBench.Client
+      - name: Windows SQLite, SSH and selected browser regression
+        if: inputs.windows || inputs.extended
+        run: node tests/integration.mjs
+        env:
+          SKIP_BROWSER: ${{ inputs.extended && '0' || '1' }}
+      - name: Publish Windows package using this job's client build
+        if: inputs.package
+        shell: pwsh
+        env:
+          FULL_BASELINE: ${{ inputs.linux && inputs.browser && inputs.windows && inputs.postgres && inputs.package && inputs.load }}
+        run: |
+          if ($env:FULL_BASELINE -eq 'true') {
+            ./scripts/Publish-Windows.ps1 -SkipClientBuild -CiQualification 'dworkbench-release-v1'
+          } else {
+            ./scripts/Publish-Windows.ps1 -SkipClientBuild
+          }
+      - name: Check Windows package
+        if: inputs.package
+        run: node tests/package.mjs
+      - name: Upload Windows package
+        if: inputs.package
+        uses: actions/upload-artifact@v4
+        with:
+          name: DWorkBench-win-x64
+          path: |
+            artifacts/windows/DWorkBench.zip
+            artifacts/windows/DWorkBench.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-windows
+          path: |
+            .local/mvp-*.png
+            .local/integration-*/server.log
+            .local/package-*/server.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+  postgres:
+    name: PostgreSQL regression
+    if: inputs.postgres
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: dworkbench_test
+          POSTGRES_USER: dworkbench_test
+          POSTGRES_PASSWORD: integration-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dworkbench_test -d dworkbench_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: src/DWorkBench.Client/package-lock.json
+      - run: npm ci
+        working-directory: src/DWorkBench.Client
+      - run: npm run build
+        working-directory: src/DWorkBench.Client
+      - run: dotnet build src/DWorkBench.Server --nologo
+      - name: PostgreSQL, authorization and workspace regression
+        run: node tests/integration.mjs
+        env:
+          SKIP_BROWSER: '1'
+          TEST_DATABASE_PROVIDER: Postgres
+          ConnectionStrings__DWorkBench: Host=127.0.0.1;Port=5432;Database=dworkbench_test;Username=dworkbench_test;Password=integration-only-password
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-postgres
+          path: .local/integration-*/server.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+  result:
+    name: Verification result
+    needs: [linux, windows, postgres]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      qualified: ${{ steps.gate.outputs.qualified }}
+    steps:
+      - name: Validate selected results
+        id: gate
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          INPUTS_JSON: ${{ toJSON(inputs) }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const needs = JSON.parse(process.env.NEEDS_JSON);
+          const inputs = JSON.parse(process.env.INPUTS_JSON);
+          const flags = ['linux', 'browser', 'windows', 'postgres', 'package', 'load'];
+          if ([...flags, 'extended'].some(flag => typeof inputs[flag] !== 'boolean')) throw new Error('Invalid verification inputs');
+          const full = flags.every(flag => inputs[flag]);
+          if (inputs.extended && !full) throw new Error('Extended verification requires the full baseline');
+          const expected = {
+            linux: inputs.linux || inputs.browser || inputs.load || inputs.extended,
+            windows: inputs.windows || inputs.package || inputs.extended,
+            postgres: inputs.postgres,
+          };
+          for (const [job, enabled] of Object.entries(expected)) {
+            const result = enabled ? 'success' : 'skipped';
+            if (needs[job].result !== result) throw new Error(`${job}: expected ${result}, got ${needs[job].result}`);
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `qualified=${full}\n`);
+          console.log(`All selected jobs succeeded. Release baseline: ${full}.`);
+          NODE

@@ -1,0 +1,96 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  candidate:
+    name: Find qualified main artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      reusable: ${{ steps.find.outputs.reusable }}
+      run_id: ${{ steps.find.outputs.run_id }}
+      artifact_id: ${{ steps.find.outputs.artifact_id }}
+      commit: ${{ steps.find.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Resolve and qualify the exact release commit
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/ci/find-release-candidate.mjs
+  fallback:
+    name: Release baseline
+    needs: candidate
+    if: needs.candidate.outputs.reusable != 'true'
+    uses: ./.github/workflows/verify.yml
+    with:
+      linux: true
+      browser: true
+      windows: true
+      postgres: true
+      package: true
+      load: true
+      extended: false
+  publish:
+    name: Publish verified release
+    needs: [candidate, fallback]
+    if: >-
+      always() && !cancelled() && needs.candidate.result == 'success' &&
+      (needs.candidate.outputs.reusable == 'true' ||
+        (needs.fallback.result == 'success' && needs.fallback.outputs.qualified == 'true'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.candidate.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download qualified main artifact
+        if: needs.candidate.outputs.reusable == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.candidate.outputs.artifact_id }}
+          run-id: ${{ needs.candidate.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: candidate-assets
+          merge-multiple: true
+      - name: Download release baseline artifact
+        if: needs.candidate.outputs.reusable != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: DWorkBench-win-x64
+          path: candidate-assets
+      - name: Check archive identity and prepare release assets
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ needs.candidate.outputs.commit }}
+        run: ./scripts/ci/Prepare-Release.ps1 -Tag $env:RELEASE_TAG -Commit $env:RELEASE_COMMIT
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        # create refuses an existing release; never delete, overwrite, or re-upload v0.1.0.
+        run: |
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --verify-tag --title "DWorkBench $RELEASE_TAG" \
+            --notes-file "docs/releases/$RELEASE_TAG.md" --latest

@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
-namespace LogDesk;
+namespace DWorkBench;
 
 public sealed record WorkspaceSettings(string Include, string Exclude, string Mode, bool CaseSensitive,
     string Format, string JsonField, string LevelPattern, string Levels, int Context);

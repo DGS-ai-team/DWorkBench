@@ -3,10 +3,10 @@ import {createRequire} from 'node:module';
 import {writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
-const require=createRequire(path.resolve('src/LogDesk.Client/package.json'));
+const require=createRequire(path.resolve('src/DWorkBench.Client/package.json'));
 const {build}=require('esbuild');
 async function bundle(entry,name){const r=await build({entryPoints:[entry],bundle:true,format:'esm',platform:'node',write:false});const file=path.resolve('.local/'+name+'.mjs');await writeFile(file,r.outputFiles[0].contents);return pathToFileURL(file);}
-const {LogActivity}=await import(await bundle('src/LogDesk.Client/src/logActivity.ts','activity-check'));
+const {LogActivity}=await import(await bundle('src/DWorkBench.Client/src/logActivity.ts','activity-check'));
 const activity=new LogActivity(100000);
 activity.setRule({pattern:'timeout',mode:'text',caseSensitive:false},100000);
 const row=(id,text)=>({id,text,level:'unknown'});
@@ -31,7 +31,7 @@ const messages=[],timers=[];
 const originalInterval=globalThis.setInterval;
 globalThis.setInterval=(...args)=>{const id=originalInterval(...args);timers.push(id);return id;};
 globalThis.self={postMessage:message=>messages.push(message)};
-await import(await bundle('src/LogDesk.Client/src/log.worker.ts','activity-worker-check'));
+await import(await bundle('src/DWorkBench.Client/src/log.worker.ts','activity-worker-check'));
 const send=data=>self.onmessage({data:{epoch:0,...data}});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 try {

@@ -39,10 +39,10 @@ const hub = new HubConnectionBuilder()
   .configureLogging(LogLevel.None)
   .build();
 hub.onreconnecting(() =>
-  window.dispatchEvent(new Event("logdesk-stream-disconnected")),
+  window.dispatchEvent(new Event("dworkbench-stream-disconnected")),
 );
 hub.onclose(() =>
-  window.dispatchEvent(new Event("logdesk-stream-disconnected")),
+  window.dispatchEvent(new Event("dworkbench-stream-disconnected")),
 );
 let starting: Promise<void> | null = null;
 async function connect() {
@@ -293,7 +293,7 @@ export function LogPane({
           "连接已中断。重新连接将读取最近快照，断线期间内容可能未显示。",
         );
     };
-    window.addEventListener("logdesk-stream-disconnected", lost);
+    window.addEventListener("dworkbench-stream-disconnected", lost);
     connect()
       .then(() => {
         if (!alive) return;
@@ -357,7 +357,7 @@ export function LogPane({
       alive = false;
       subscription.current?.dispose();
       subscription.current = undefined;
-      window.removeEventListener("logdesk-stream-disconnected", lost);
+      window.removeEventListener("dworkbench-stream-disconnected", lost);
     };
   }, [running, generation, pane.groupId, pane.file.id]);
 

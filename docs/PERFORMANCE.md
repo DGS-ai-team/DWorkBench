@@ -86,7 +86,7 @@ RE2JS 2.9.1 用于用户模式匹配，避免使用浏览器原生回溯正则�
 先执行 README 的依赖安装、前端构建和后端构建，再从仓库根目录运行：
 
 ```powershell
-dotnet run --project tests/LogDesk.CoreChecks
+dotnet run --project tests/DWorkBench.CoreChecks
 node tests/log-processing.mjs
 node tests/integration.mjs
 node tests/load.mjs
@@ -98,7 +98,7 @@ node tests/wsl-integration.mjs
 
 `LOAD_BASELINE_DLL` 可选指向升级前保存的完整构建目录中的 DLL，追加旧版 8 人对照。应在修改前保留对应构建；只复制一个 DLL 不足以复现旧版运行依赖。没有基线时跳过对照，不影响新版压测。
 
-PostgreSQL 请创建全新专用测试库，设置 `TEST_DATABASE_PROVIDER=Postgres` 与 `ConnectionStrings__LogDesk` 后分别运行集成与压测脚本；每次重新创建测试库。不要指向业务库。现有 GitHub workflow 增加了短压测和核心检查，本次未触发远程 CI。
+PostgreSQL 请创建全新专用测试库，设置 `TEST_DATABASE_PROVIDER=Postgres` 与 `ConnectionStrings__DWorkBench` 后分别运行集成与压测脚本；每次重新创建测试库。不要指向业务库。现有 GitHub workflow 增加了短压测和核心检查，本次未触发远程 CI。
 
 ## 结论与待测范围
 

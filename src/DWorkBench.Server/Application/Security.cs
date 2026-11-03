@@ -2,7 +2,7 @@ using System.Security.Claims;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 
-namespace LogDesk;
+namespace DWorkBench;
 
 public static class Rules
 {

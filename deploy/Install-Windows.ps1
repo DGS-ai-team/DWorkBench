@@ -1,7 +1,7 @@
 #Requires -RunAsAdministrator
 param(
     [string]$AppPath = $PSScriptRoot,
-    [string]$DataRoot = 'D:\LogDesk',
+    [string]$DataRoot = 'D:\DWorkBench',
     [Parameter(Mandatory)][string]$DatabaseConnectionString,
     [Parameter(Mandatory)][string]$HttpsCertificateThumbprint,
     [Parameter(Mandatory)][string]$ProtectionCertificateThumbprint,
@@ -12,9 +12,18 @@ $ErrorActionPreference = 'Stop'
 $AppPath = [IO.Path]::GetFullPath($AppPath)
 $DataRoot = [IO.Path]::GetFullPath($DataRoot)
 if ($AppPath.TrimEnd('\') -eq [IO.Path]::GetPathRoot($AppPath).TrimEnd('\') -or $DataRoot.TrimEnd('\') -eq [IO.Path]::GetPathRoot($DataRoot).TrimEnd('\')) { throw 'Application and data paths must be dedicated directories, not drive roots.' }
-$exe = Join-Path $AppPath 'LogDesk.Server.exe'
+$exe = Join-Path $AppPath 'DWorkBench.Server.exe'
 if (-not (Test-Path -LiteralPath $exe)) { throw 'Extract the published Windows package before installing.' }
 if ($Port -lt 1 -or $Port -gt 65535) { throw 'Invalid HTTPS port.' }
+$legacyService = Get-Service -Name LogDesk -ErrorAction SilentlyContinue
+if ($legacyService) {
+    if ($legacyService.Status -ne 'Stopped' -or $legacyService.StartType -ne 'Disabled') {
+        throw 'Stop and disable the legacy LogDesk service before installing DWorkBench. See the deployment rename instructions.'
+    }
+    if (-not $PSBoundParameters.ContainsKey('DataRoot')) {
+        throw 'Specify the existing -DataRoot explicitly to preserve the database key ring when upgrading.'
+    }
+}
 $sidService = [Security.Principal.SecurityIdentifier]::new('S-1-5-19')
 $sidAdmins = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
 $sidSystem = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
@@ -48,21 +57,22 @@ $settingsFile = Join-Path $AppPath 'appsettings.local.json'
 $bootstrap = if (Test-Path -LiteralPath $settingsFile) { (Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json).Bootstrap.Token } else { $null }
 if (-not $bootstrap) { $bytes=New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes); $bootstrap=[Convert]::ToBase64String($bytes) }
 $settings = @{
-    Database = @{ Provider = 'Postgres' }; ConnectionStrings = @{ LogDesk = $DatabaseConnectionString }
+    Database = @{ Provider = 'Postgres' }; ConnectionStrings = @{ DWorkBench = $DatabaseConnectionString }
     Storage = @{ Root = $DataRoot }; Hosting = @{ HttpsCertificateThumbprint = $HttpsCertificateThumbprint; Port = $Port }
     Protection = @{ CertificateThumbprint = $ProtectionCertificateThumbprint }; Bootstrap = @{ Token = $bootstrap }
 }
 $settings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $settingsFile -Encoding utf8
-if (-not [Diagnostics.EventLog]::SourceExists('LogDesk')) { New-EventLog -LogName Application -Source LogDesk }
+if (-not [Diagnostics.EventLog]::SourceExists('DWorkBench')) { New-EventLog -LogName Application -Source DWorkBench }
 $binary = '"' + $exe + '" --contentRoot "' + $AppPath + '" --environment Production'
-$service = Get-Service -Name LogDesk -ErrorAction SilentlyContinue
-if ($service) { Stop-Service LogDesk; & sc.exe config LogDesk binPath= $binary } else { New-Service -Name LogDesk -BinaryPathName $binary -DisplayName 'LogDesk Team Workspace' -StartupType Automatic | Out-Null }
-& sc.exe config LogDesk obj= 'NT AUTHORITY\LocalService' start= auto
+$service = Get-Service -Name DWorkBench -ErrorAction SilentlyContinue
+if ($service) { Stop-Service DWorkBench; & sc.exe config DWorkBench binPath= $binary } else { New-Service -Name DWorkBench -BinaryPathName $binary -DisplayName 'DWorkBench Team Workspace' -StartupType Automatic | Out-Null }
+& sc.exe config DWorkBench obj= 'NT AUTHORITY\LocalService' start= auto
 if ($LASTEXITCODE) { throw 'Unable to configure service identity.' }
-& sc.exe failure LogDesk reset= 86400 actions= restart/5000/restart/15000/restart/60000
+& sc.exe failure DWorkBench reset= 86400 actions= restart/5000/restart/15000/restart/60000
 if ($LASTEXITCODE) { throw 'Unable to configure service recovery.' }
-if (Get-NetFirewallRule -Name LogDesk-HTTPS -ErrorAction SilentlyContinue) { Remove-NetFirewallRule -Name LogDesk-HTTPS }
-New-NetFirewallRule -Name LogDesk-HTTPS -DisplayName 'LogDesk HTTPS' -Direction Inbound -Protocol TCP -LocalPort $Port -RemoteAddress $AllowedRemoteAddress -Action Allow -Program $exe | Out-Null
-Start-Service LogDesk
-Write-Host 'LogDesk service installed. Verify /api/health over HTTPS before initializing.'
+if (Get-NetFirewallRule -Name DWorkBench-HTTPS -ErrorAction SilentlyContinue) { Remove-NetFirewallRule -Name DWorkBench-HTTPS }
+New-NetFirewallRule -Name DWorkBench-HTTPS -DisplayName 'DWorkBench HTTPS' -Direction Inbound -Protocol TCP -LocalPort $Port -RemoteAddress $AllowedRemoteAddress -Action Allow -Program $exe | Out-Null
+if ($legacyService -and (Get-NetFirewallRule -Name LogDesk-HTTPS -ErrorAction SilentlyContinue)) { Disable-NetFirewallRule -Name LogDesk-HTTPS | Out-Null }
+Start-Service DWorkBench
+Write-Host 'DWorkBench service installed. Verify /api/health over HTTPS before initializing.'
 Write-Host "Initialization token is stored in Bootstrap.Token in: $settingsFile"

@@ -151,6 +151,9 @@ function newestDraft(
   try {
     const keys = Object.keys(localStorage).filter(
       (k) =>
+        k.startsWith(`dworkbench:workspace-draft:v2:${owner}:`) ||
+        k === `dworkbench:workspace-draft:v1:${owner}` ||
+        // Recover drafts created before the product rename; new writes use DWorkBench.
         k.startsWith(`logdesk:workspace-draft:v2:${owner}:`) ||
         k === `logdesk:workspace-draft:v1:${owner}`,
     );
@@ -226,7 +229,7 @@ export function useWorkspacePersistence(
         updatedAt: Date.now(),
       };
       const entry = {
-        key: `logdesk:workspace-draft:v2:${id}:${crypto.randomUUID()}`,
+        key: `dworkbench:workspace-draft:v2:${id}:${crypto.randomUUID()}`,
         raw: JSON.stringify(draft),
         draft,
       };

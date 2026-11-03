@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Renci.SshNet;
 using Renci.SshNet.Common;
 
-namespace LogDesk;
+namespace DWorkBench;
 
 public record RemoteFile(string Name, string Path, long Size, long ModifiedAt);
 
@@ -41,6 +41,7 @@ public sealed class RemoteLogs(IDataProtectionProvider protection) : IRemoteLogR
         }
         finally { previewSlots.Release(); }
     }
+    // This purpose is part of the saved ciphertext format, not a display name.
     private readonly IDataProtector protector = protection.CreateProtector("LogDesk.SshCredential.v1");
     public string Protect(string password) => protector.Protect(password);
     private Renci.SshNet.ConnectionInfo Info(Host host) => new(host.Address, host.Port, host.Username,

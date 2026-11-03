@@ -9,7 +9,7 @@ import net from 'node:net';
 import { workspaceChecks, workspaceBrowserChecks } from './workspace.mjs';
 import { reviewApiChecks, reviewBrowserChecks } from './review-regression.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const require=createRequire(path.join(root,'src/LogDesk.Client/package.json'));
+const require=createRequire(path.join(root,'src/DWorkBench.Client/package.json'));
 const {Server,utils}=require('ssh2');
 const {HubConnectionBuilder,LogLevel}=require('@microsoft/signalr');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
@@ -70,8 +70,8 @@ await mkdir(path.join(root,'.local'),{recursive:true});const storage=await mkdte
 const a=await fixture('api-01'),b=await fixture('worker-02');const appPort=await port();const production=process.env.TEST_PRODUCTION==='1';const base=`${production?'https':'http'}://127.0.0.1:${appPort}`;
 const dotnet=process.env.DOTNET_EXE??path.join(root,'.tools/dotnet',process.platform==='win32'?'dotnet.exe':'dotnet');
 const testProvider=process.env.TEST_DATABASE_PROVIDER??'Sqlite';
-let app=spawn(dotnet,[process.env.TEST_SERVER_DLL??path.join(root,'src/LogDesk.Server/bin/Debug/net10.0/LogDesk.Server.dll')],{
-  cwd:path.join(root,'src/LogDesk.Server'),windowsHide:true,
+let app=spawn(dotnet,[process.env.TEST_SERVER_DLL??path.join(root,'src/DWorkBench.Server/bin/Debug/net10.0/DWorkBench.Server.dll')],{
+  cwd:path.join(root,'src/DWorkBench.Server'),windowsHide:true,
   env:{...process.env,ASPNETCORE_ENVIRONMENT:production?'Production':'Development',ASPNETCORE_URLS:base,Database__Provider:testProvider,Storage__Root:storage,Bootstrap__Token:'test-only-bootstrap-'+appPort}
 });
 let output='';app.stdout.on('data',c=>output+=c);app.stderr.on('data',c=>output+=c);
@@ -162,7 +162,7 @@ try{
   console.log('PASS SSH disconnect isolation, fresh retry, five transport reconnect cycles and zero residual readers/subscriptions');
   const audit=await admin.request('/audit');assert.ok(audit.some(e=>e.action==='download.completed'));assert.ok(audit.some(e=>e.action==='stream.started'));assert.ok(audit.some(e=>e.action==='access.denied'));
   assert.ok(!JSON.stringify(audit).includes('FixtureSecret123'));
-  if(testProvider==='Sqlite'){const dbBytes=await readFile(path.join(storage,'logdesk.db'));assert.ok(!dbBytes.includes(Buffer.from('FixtureSecret123')),'plaintext password must not be persisted')}
+  if(testProvider==='Sqlite'){const dbBytes=await readFile(path.join(storage,'dworkbench.db'));assert.ok(!dbBytes.includes(Buffer.from('FixtureSecret123')),'plaintext password must not be persisted')}
   console.log('PASS API + SSH/SFTP: bootstrap, CSRF, host trust, multi-host scan, cursor paging, UTF-8 download, scoped RBAC, four-stream quota, cancellation and audit');
 
   if(process.env.SKIP_BROWSER!=='1'){

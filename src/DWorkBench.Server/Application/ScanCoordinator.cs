@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 
-namespace LogDesk;
+namespace DWorkBench;
 
 public record ScanStatus(string State, long Count, string? Error, long StartedAt);
 

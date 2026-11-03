@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Channels;
 
-namespace LogDesk;
+namespace DWorkBench;
 
 public interface IRemoteLogReader
 {

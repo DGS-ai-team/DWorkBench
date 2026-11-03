@@ -7,7 +7,7 @@ import path from "node:path";
 import net from "node:net";
 export const root = process.cwd();
 export const require = createRequire(
-  path.join(root, "src/LogDesk.Client/package.json"),
+  path.join(root, "src/DWorkBench.Client/package.json"),
 );
 const { Server } = require("ssh2");
 export const { HubConnectionBuilder, LogLevel } = require("@microsoft/signalr");
@@ -90,11 +90,11 @@ export async function startApp(label, dll) {
         process.env.TEST_SERVER_DLL ??
         path.join(
           root,
-          "src/LogDesk.Server/bin/Debug/net10.0/LogDesk.Server.dll",
+          "src/DWorkBench.Server/bin/Debug/net10.0/DWorkBench.Server.dll",
         ),
     ],
     {
-      cwd: path.join(root, "src/LogDesk.Server"),
+      cwd: path.join(root, "src/DWorkBench.Server"),
       windowsHide: true,
       env: {
         ...process.env,

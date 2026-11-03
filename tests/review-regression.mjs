@@ -136,7 +136,7 @@ export async function reviewBrowserChecks({ page: p, admin, fixtures, until }) {
   await filter(p).fill('offline-draft-A');
   await filter(dirty).fill('offline-draft-B');
   await until(async () => p.evaluate(() => {
-    const values = Object.keys(localStorage).filter(k => k.startsWith('logdesk:workspace-draft:v2:')).map(k => localStorage.getItem(k)).join('\n');
+    const values = Object.keys(localStorage).filter(k => k.startsWith('dworkbench:workspace-draft:v2:')).map(k => localStorage.getItem(k)).join('\n');
     return values.includes('offline-draft-A') && values.includes('offline-draft-B');
   }));
   await dirty.close();

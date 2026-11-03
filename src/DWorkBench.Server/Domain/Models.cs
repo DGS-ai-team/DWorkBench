@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Identity;
 
-namespace LogDesk;
+namespace DWorkBench;
 
 public class AppUser : IdentityUser
 {

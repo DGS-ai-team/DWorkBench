@@ -1,5 +1,5 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/LogDesk.Server/LogDesk.Server.csproj" />
+    <Project Path="src/DWorkBench.Server/DWorkBench.Server.csproj" />
   </Folder>
 </Solution>

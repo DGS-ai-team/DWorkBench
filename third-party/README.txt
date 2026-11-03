@@ -1,4 +1,4 @@
-Third-party notices for LogDesk
+Third-party notices for DWorkBench
 
 Frontend: React, React DOM, Microsoft SignalR, TanStack Virtual, Lucide, RE2JS and their dependencies.
 Backend: ASP.NET Core/.NET, Entity Framework Core, SSH.NET/BouncyCastle, Npgsql and SQLitePCLRaw.

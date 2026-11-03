@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
-  build: { outDir: "../LogDesk.Server/wwwroot", emptyOutDir: true },
+  build: { outDir: "../DWorkBench.Server/wwwroot", emptyOutDir: true },
   server: {
     proxy: {
       "/api": "http://127.0.0.1:5080",

@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 
-namespace LogDesk;
+namespace DWorkBench;
 
 [Authorize]
 public sealed class LogsHub(AccessService access, SharedLogBroker broker, AuditWriter audit,

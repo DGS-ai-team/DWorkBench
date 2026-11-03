@@ -5,12 +5,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 const root = process.cwd();
 const require = createRequire(
-  path.join(root, "src/LogDesk.Client/package.json"),
+  path.join(root, "src/DWorkBench.Client/package.json"),
 );
 const esbuild = require("esbuild");
 await mkdir(".local", { recursive: true });
 const result = await esbuild.build({
-  entryPoints: ["src/LogDesk.Client/src/logProcessing.ts"],
+  entryPoints: ["src/DWorkBench.Client/src/logProcessing.ts"],
   bundle: true,
   format: "esm",
   platform: "node",

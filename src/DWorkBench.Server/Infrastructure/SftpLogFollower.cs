@@ -5,9 +5,9 @@ using Renci.SshNet;
 using Renci.SshNet.Common;
 using Renci.SshNet.Sftp;
 
-namespace LogDesk;
+namespace DWorkBench;
 
-// Runs entirely on the LogDesk server. SFTP v3 has no portable inode or atomic
+// Runs entirely on the DWorkBench server. SFTP v3 has no portable inode or atomic
 // no-follow open: canonical-path checks detect observed links, not hostile races.
 internal sealed class SftpLogFollower(SftpClient client, string path, Encoding encoding, ChannelWriter<RemoteLogChunk> output)
 {

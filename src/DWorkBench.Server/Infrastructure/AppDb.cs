@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
-namespace LogDesk;
+namespace DWorkBench;
 
 public class AppDb(DbContextOptions<AppDb> options) : IdentityDbContext<AppUser>(options)
 {

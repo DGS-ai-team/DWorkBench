@@ -48,7 +48,7 @@ tests/integration.mjs 使用回环地址上的受控 SSH 测试服务器，校�
 
 ## 本机 WSL 实测
 
-同日通过 tests/wsl-integration.mjs 完成。Windows 上的 LogDesk 后端通过真实网络 SSH/SFTP 连接本机 WSL2 Ubuntu 26.04；服务端实现为 OpenSSH 10.2p1。测试通过独立应用进程和 SQLite 数据库运行，未修改 http://127.0.0.1:5080 的开发预览数据。
+同日通过 tests/wsl-integration.mjs 完成。Windows 上的 DWorkBench 后端通过真实网络 SSH/SFTP 连接本机 WSL2 Ubuntu 26.04；服务端实现为 OpenSSH 10.2p1。测试通过独立应用进程和 SQLite 数据库运行，未修改 http://127.0.0.1:5080 的开发预览数据。
 
 - 在临时目录创建 253 个匹配日志文件，另加不匹配文件和符号链接；SFTP 结果正确排除后二者，分页为 200 + 53 项，文件 ID 无重复。
 - 将 SSH.NET 探测指纹与 ssh-keygen 输出逐字核对，确认固定指纹后密码认证成功。
@@ -149,13 +149,13 @@ node tests/wsl-integration.mjs
 
 ### 复现与范围
 
-- 运行 `dotnet run --project tests/LogDesk.CoreChecks`、`node tests/log-processing.mjs`、`node tests/log-activity.mjs`。
-- 设置 `SKIP_BROWSER=1` 后运行 `node tests/integration.mjs`；PostgreSQL 另指定 `TEST_DATABASE_PROVIDER=Postgres` 和指向空白测试数据库的 `ConnectionStrings__LogDesk`。
+- 运行 `dotnet run --project tests/DWorkBench.CoreChecks`、`node tests/log-processing.mjs`、`node tests/log-activity.mjs`。
+- 设置 `SKIP_BROWSER=1` 后运行 `node tests/integration.mjs`；PostgreSQL 另指定 `TEST_DATABASE_PROVIDER=Postgres` 和指向空白测试数据库的 `ConnectionStrings__DWorkBench`。
 - 设置 `LOAD_SECONDS=5`、`SKIP_BROWSER=1` 后运行 `node tests/load.mjs`。
 - 设置 `WSL_LOAD=1`、`SKIP_BROWSER=1` 后运行 `node tests/wsl-integration.mjs`。
 - `node tests/ui-fixture.mjs` 提供独立四主机浏览器回归环境；终端输出临时入口及仅供夹具使用的账号。终端命令 `rate 1000`、`ssh-drop`、`web-drop`、`status`、`released`、`quit` 可调速、注入故障、检查释放和清理。只在本机测试时使用。
 - 本轮浏览器验证使用内置浏览器；没有执行 Playwright 分支或远程 CI。现有 CI 浏览器用例已补充溢出视口下菜单保持打开及恢复快照提示断言，等待 CI 后续执行。
-- 浏览器截图：`.local/stage1-20261102/menu-live-and-recovery.png`。WSL 报告：`.local/wsl-integration-yk8Dgu/result.json`。PostgreSQL 使用新建测试库 `logdesk_stage1_20261102`，原有数据库未改动。
+- 浏览器截图：`.local/stage1-20261102/menu-live-and-recovery.png`。WSL 报告：`.local/wsl-integration-yk8Dgu/result.json`。PostgreSQL 使用新建测试库 `logdesk_stage1_20261102`（当时的实际库名），原有数据库未改动。
 
 后续顺序：第二阶段做工作台保存与恢复；第三阶段部署到目标 Windows Server 2022；第四阶段在管理网络按实际主机数、团队并发和日志流量做容量与长时验收。SSO、Ansible 及其他主机管理模块继续留待后续。
 
@@ -210,7 +210,7 @@ node tests/wsl-integration.mjs
 
 用户确认按可信内网主机设计、不安装任何远端组件。已删除 Python 读取器及 SSH 命令执行入口；连接探测、清单、下载和跟随统一使用 SSH.NET 的 SFTP。远端只需现有 SSH/SFTP 服务与相应账号权限，无需 Python、tail、Shell 执行或临时上传程序。
 
-- 跟随、增量解码和截断/轮转观察在 LogDesk 服务端完成；单文件共享读取、权限、配额和审计保持生效。活跃轮询约 250ms，空闲退避到 2s，初始快照限最近 128 KiB 中至多 200 行。
+- 跟随、增量解码和截断/轮转观察在 DWorkBench 服务端完成；单文件共享读取、权限、配额和审计保持生效。活跃轮询约 250ms，空闲退避到 2s，初始快照限最近 128 KiB 中至多 200 行。
 - 下载长度与内容取自同一 SFTP 句柄。打开前后核对规范路径和普通文件，拒绝已发现的符号链接；普通 SFTP 不提供原子的逐级 no-follow 打开，不能声称抵御恶意并发路径替换。以远端账号的 OS 权限为最终边界。
 - SFTP v3 没有统一 inode；以大小和有界内容检查点观察替换，不能保证快速多次轮转/截断重写或相同检查点文件替换时无遗漏、无重复。此前 Python/O_NOFOLLOW 的安全保证、原生测试结果和 tail 性能数据不再适用于当前实现。
 - 适配现有集成和负载夹具：SFTP 支持 FSTAT 与增长文件，拒绝所有 exec 请求；WSL 夹具使用 ForceCommand internal-sftp，Python 仅供开发机管理端造数。移除已无对应实现的 Python 原生测试及 CI 步骤。
@@ -223,3 +223,11 @@ node tests/wsl-integration.mjs
 - 远端读取接口增加独立的快照截断标记：128 KiB 字节窗口不足以返回最近 200 行时（包括没有完整可显示记录的情况），Broker 向当前订阅广播容量提示并保留状态，让后续共享订阅也收到提示；常规只取最近 200 行不因此误报。继续使用现有窗格提示与原文件下载入口，日志正文不混入提示文字。
 
 本地完成构建；只适配现有 Broker 夹具的接口类型，未新增或在本地执行测试。此轮 CI 结果以对应提交的 PR Checks 为准。
+
+## 2026-11-03 项目统一命名为 DWorkBench
+
+界面品牌、页面标题、源码目录/项目文件、C# 命名空间、Windows 服务与事件源、默认部署目录、发布 ZIP、npm 包名、CI Artifact 和文档统一使用 DWorkBench。现有测试夹具的路径和配置引用同步更新。
+
+保留历史 Data Protection 应用标识和 SSH 凭据 purpose；数据库连接支持旧配置键回退，开发环境可原位复用旧 SQLite 文件，浏览器读取旧草稿并以新前缀写入。Windows 安装器在旧服务未停止/禁用时拒绝并行安装，并要求升级时显式提供原数据目录。更名迁移说明见部署文档。
+
+本地 TypeScript/Vite、DWorkBench.slnx 和 DWorkBench.CoreChecks 项目构建通过；未新增或在本地执行测试、服务迁移、浏览器回归或目标服务器部署。新提交的自动 CI 结果以 PR Checks 为准。

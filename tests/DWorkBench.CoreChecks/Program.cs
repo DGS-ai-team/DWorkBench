@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Channels;
-using LogDesk;
+using DWorkBench;
 using Microsoft.Extensions.Configuration;
 
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }

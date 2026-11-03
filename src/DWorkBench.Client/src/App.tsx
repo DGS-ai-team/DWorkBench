@@ -930,7 +930,7 @@ function Login({ setup, done }: { setup: boolean; done: () => Promise<void> }) {
             <span>团队权限与操作记录</span>
           </div>
         </div>
-        <small>LogDesk · 团队 Linux 管理工作台</small>
+        <small>DWorkBench · 团队 Linux 管理工作台</small>
       </div>
       <main className="login-main">
         <form

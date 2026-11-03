@@ -31,20 +31,20 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: src/LogDesk.Client/package-lock.json
+          cache-dependency-path: src/DWorkBench.Client/package-lock.json
       - name: Install client dependencies
         run: npm ci
-        working-directory: src/LogDesk.Client
+        working-directory: src/DWorkBench.Client
       # Vite generates wwwroot; finish before ASP.NET computes static assets.
       - name: Build client
         run: npm run build
-        working-directory: src/LogDesk.Client
-      - run: dotnet build src/LogDesk.Server --nologo
-      - run: dotnet run --project tests/LogDesk.CoreChecks
+        working-directory: src/DWorkBench.Client
+      - run: dotnet build src/DWorkBench.Server --nologo
+      - run: dotnet run --project tests/DWorkBench.CoreChecks
       - run: node tests/log-processing.mjs
       - run: node tests/log-activity.mjs
       - run: npx playwright install chromium --with-deps
-        working-directory: src/LogDesk.Client
+        working-directory: src/DWorkBench.Client
       - name: SQLite, SSH and browser regression
         run: node tests/integration.mjs
       - name: Shared stream load smoke
@@ -64,10 +64,10 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: LogDesk-win-x64
+          name: DWorkBench-win-x64
           path: |
-            artifacts/windows/LogDesk.zip
-            artifacts/windows/LogDesk.zip.sha256
+            artifacts/windows/DWorkBench.zip
+            artifacts/windows/DWorkBench.zip.sha256
           if-no-files-found: error
           retention-days: 14
       - name: Upload diagnostics
@@ -93,13 +93,13 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_DB: logdesk_test
-          POSTGRES_USER: logdesk_test
+          POSTGRES_DB: dworkbench_test
+          POSTGRES_USER: dworkbench_test
           POSTGRES_PASSWORD: integration-only-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U logdesk_test -d logdesk_test"
+          --health-cmd "pg_isready -U dworkbench_test -d dworkbench_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -112,19 +112,19 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: src/LogDesk.Client/package-lock.json
+          cache-dependency-path: src/DWorkBench.Client/package-lock.json
       - run: npm ci
-        working-directory: src/LogDesk.Client
+        working-directory: src/DWorkBench.Client
       - run: npm run build
-        working-directory: src/LogDesk.Client
-      - run: dotnet build src/LogDesk.Server --nologo
+        working-directory: src/DWorkBench.Client
+      - run: dotnet build src/DWorkBench.Server --nologo
       - name: PostgreSQL, authorization and workspace regression
         run: node tests/integration.mjs
         env:
           DOTNET_EXE: dotnet
           SKIP_BROWSER: '1'
           TEST_DATABASE_PROVIDER: Postgres
-          ConnectionStrings__LogDesk: Host=127.0.0.1;Port=5432;Database=logdesk_test;Username=logdesk_test;Password=integration-only-password
+          ConnectionStrings__DWorkBench: Host=127.0.0.1;Port=5432;Database=dworkbench_test;Username=dworkbench_test;Password=integration-only-password
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4

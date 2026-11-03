@@ -38,6 +38,8 @@ Linux 目标机只需已有的 **SSH/SFTP 服务和可读取日志的账号**。
 
 生成 artifacts/windows/LogDesk.zip。解压后用包内 Install-Windows.ps1 配置 PostgreSQL、HTTPS 与凭据保护证书。应用和数据库原生运行在 Windows，MVP 不依赖 WSL；具体步骤见 [部署与使用说明](docs/DEPLOYMENT.md)。
 
+管理网络无法访问互联网时，按 [离线安装说明](docs/DEPLOYMENT.md#离线安装windows-server-2022) 提前准备发布包、SHA-256、PostgreSQL 完整安装包及证书。目标 VM 不需要安装 SDK、Node.js 或在线还原依赖；DEPLOYMENT.md 随发布包提供，可在内网直接阅读。
+
 ## 验证
 
 第一阶段回归与稳定性收尾、第二阶段工作台保存与恢复已实现。CI 在每个 PR、推送到 `main` 以及手动触发时运行；具体结果以该提交的 GitHub Actions 状态为准，历史本地结果见 [验证记录](docs/VALIDATION.md)。

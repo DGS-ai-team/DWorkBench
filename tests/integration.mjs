@@ -185,10 +185,13 @@ try{
     await p.locator('.log-pane').first().getByRole('button',{name:/更多操作/}).click();await p.getByRole('menuitem',{name:'继续接收',exact:true}).click();
     await until(()=>a.active+b.active===2);await p.locator('.log-pane').first().getByText('已重新读取最近快照；中断期间的记录可能未显示，统计重新开始。',{exact:true}).waitFor();
     await p.locator('.log-pane').first().getByRole('button',{name:/更多操作/}).click();await p.getByRole('menuitem',{name:'停止接收',exact:true}).click();await until(()=>a.active+b.active===1);
+    const stoppedCount=await p.locator('.log-pane').first().locator('.match-count').innerText();
     await p.getByRole('button',{name:'专注模式'}).click();assert.equal(await p.locator('.app-header').isVisible(),false);await p.keyboard.press('Escape');assert.equal(await p.locator('.app-header').isVisible(),true);
     await p.getByRole('button',{name:'团队成员',exact:true}).click();await p.getByRole('heading',{name:'团队成员'}).waitFor();await p.getByRole('button',{name:'添加成员'}).click();await p.getByLabel('登录名',{exact:true}).fill('browseruser');await p.getByLabel('显示名称').fill('浏览器测试成员');await p.getByLabel('初始密码').fill('BrowserUser12345');await p.getByRole('button',{name:'保存',exact:true}).click();await p.getByRole('heading',{name:'浏览器测试成员'}).waitFor();
     assert.equal(a.active+b.active,1,'opening management pages must preserve active streams');
-    await p.getByRole('button',{name:'日志工作台',exact:true}).click();assert.equal(await p.locator('.log-pane').count(),2);await p.locator('.log-pane').first().getByText('request completed',{exact:false}).first().waitFor();
+    await p.getByRole('button',{name:'日志工作台',exact:true}).click();assert.equal(await p.locator('.log-pane').count(),2);
+    await p.locator('.log-pane').first().locator('.log-line').first().waitFor();
+    assert.equal(await p.locator('.log-pane').first().locator('.match-count').innerText(),stoppedCount,'management navigation preserves the stopped pane buffer');
     await workspaceBrowserChecks({page:p,admin,fixtures:[a,b],until});
     await p.screenshot({path:path.join(root,'.local/mvp-workspace-restored.png'),fullPage:true});
     assert.deepEqual(errors,[]);await context.close();await browser.close();browser=null;

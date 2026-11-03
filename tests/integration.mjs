@@ -33,7 +33,7 @@ async function fixture(label){
       session.on('sftp',accept=>{
         const s=accept(),handles=new Map();let next=1,openCount=0,timer,counted=false,closed=false;
         const track=()=>{const paths=[...new Set([...handles.values()].filter(h=>h.path).map(h=>h.path))];if(paths.length&&!counted){active++;counted=true}if(!paths.length&&counted){active--;counted=false}if(!paths.length){clearInterval(timer);timer=undefined}else if(openCount>=2&&!timer)timer=setInterval(()=>{for(const p of paths)files.set(p,Buffer.concat([files.get(p),Buffer.from(`2026-11-02 10:15:02.125 INFO  [${label}] request completed duration=12ms ✓\n`)]))},180)};
-        const close=()=>{closed=true;handles.clear();track();client.removeListener('close',close)};s.on('close',close);s.on('error',close);client.on('close',close);
+        const close=()=>{closed=true;handles.clear();track();client.removeListener('close',close)};s.on('end',()=>{close();s.end()});s.on('close',close);s.on('error',close);client.on('close',close);
         const handle=value=>{const b=Buffer.alloc(4);b.writeUInt32BE(next++);handles.set(b.toString('hex'),value);return b};
         const attr=p=>({mode:p===dir?0o040755:p.endsWith('link.log')?0o120777:0o100644,size:files.get(p)?.length??0,uid:1000,gid:1000,atime:Math.floor(Date.now()/1000),mtime:1770000000+(p===logPath?1000:Number(p.match(/(\d+)\.log$/)?.[1]??0))});
         s.on('REALPATH',(id,p)=>s.name(id,[{filename:p,longname:p,attrs:attr(p)}]));
@@ -127,9 +127,10 @@ try{
   await until(()=>content.includes('服务已启动')&&a.active===1);
   const sharedStatus=await admin.request('/streams/status');assert.equal(sharedStatus.readers,1);assert.equal(sharedStatus.subscriptions,4);
   await new Promise((resolve,reject)=>{hub.stream('Watch',group.id,fa.id).subscribe({next:()=>{},error:resolve,complete:()=>reject(new Error('fifth stream unexpectedly admitted'))})});
-  const fullyIdle=async()=>{const s=await admin.request('/streams/status');return s.readers===0&&s.subscriptions===0&&a.active===0&&b.active===0};
+  let idleState;
+  const fullyIdle=async()=>{const s=await admin.request('/streams/status');idleState={readers:s.readers,subscriptions:s.subscriptions,a:a.active,b:b.active};return s.readers===0&&s.subscriptions===0&&a.active===0&&b.active===0};
   // Wait for both the fixture's file handles and the broker to finish releasing.
-  subscriptions.forEach(s=>s.dispose());await until(fullyIdle);
+  subscriptions.forEach(s=>s.dispose());try{await until(fullyIdle)}catch(error){throw new Error(`Stream cleanup timed out: ${JSON.stringify(idleState)}`,{cause:error})}
   const restarted=hub.stream('Watch',group.id,fa.id).subscribe({next:()=>{},error:error=>{throw error}});await until(()=>a.active===1);restarted.dispose();await until(fullyIdle);
   let forbidden=false;const vh=new HubConnectionBuilder().withUrl(base+'/hubs/logs',{headers:{Cookie:v.cookie()}}).configureLogging(LogLevel.None).build();await vh.start();
   await new Promise((resolve,reject)=>vh.stream('Watch',group.id,fb.id).subscribe({next:()=>reject(new Error('unauthorized stream emitted data')),error:()=>{forbidden=true;resolve()},complete:resolve}));assert.ok(forbidden);

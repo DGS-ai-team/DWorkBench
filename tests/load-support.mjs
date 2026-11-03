@@ -241,7 +241,7 @@ export async function sshFixture(name = "bench.log") {
             } else sessions.delete(s);
           };
           const close = () => { handles.clear(); track(); client.off('close', close); };
-          s.on('close', close); s.on('error', close); client.on('close', close);
+          s.on('end', () => { close(); s.end(); }); s.on('close', close); s.on('error', close); client.on('close', close);
           const attrs = (p) => ({
             mode: p === directory ? 0o040755 : 0o100644,
             size: fileLength,
